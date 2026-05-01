@@ -1,8 +1,10 @@
 """System eKploiter — entry point (Milestone 0)."""
 
 import sys
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
@@ -57,9 +59,14 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status)
 
 
+_ICON_PATH = Path(__file__).parent / "assets" / "icons" / "ekploiter.png"
+
+
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName(strings.APP_TITLE)
+    if _ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(_ICON_PATH)))
     # Inherit Plasma's active color scheme — no palette override (spec §3)
     window = MainWindow()
     window.show()

@@ -29,12 +29,27 @@ python main.py
 
 ```
 ekploiter/
-├── main.py          # Entry point
-├── strings.py       # Centralised terminology layer (§4 of spec)
-├── views/           # Per-tab view models and UI logic
-├── backends/        # Pluggable backends (apt, flatpak, snap, zfs, …)
-├── models/          # Data classes shared across views and backends
-└── tests/           # pytest test suite (parsers tested first)
+├── main.py              # Entry point
+├── strings.py           # Centralised terminology layer (§4 of spec)
+├── assets/
+│   ├── icons/
+│   │   └── ekploiter.png   # App icon — Adwaita folder + magnifying glass + clamp (§15)
+│   └── ekploiter.desktop   # KDE app-menu integration
+├── views/               # Per-tab view models and UI logic
+├── backends/            # Pluggable backends (apt, flatpak, snap, zfs, …)
+├── models/              # Data classes shared across views and backends
+└── tests/               # pytest test suite (parsers tested first)
+```
+
+### Installing the desktop entry (development)
+
+```bash
+# Icon
+cp assets/icons/ekploiter.png ~/.local/share/icons/hicolor/512x512/apps/ekploiter.png
+gtk-update-icon-cache ~/.local/share/icons/hicolor/ 2>/dev/null || true
+
+# Desktop file (edit Exec= to point at your main.py first)
+cp assets/ekploiter.desktop ~/.local/share/applications/
 ```
 
 ## Milestones
