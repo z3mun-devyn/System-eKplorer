@@ -1,9 +1,8 @@
-"""System eKploiter — entry point (Milestone 0)."""
+"""System eKploiter — entry point."""
 
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -16,22 +15,22 @@ from PyQt6.QtWidgets import (
 )
 
 import strings
+from views.dashboard_view import DashboardView
 
 
 class FilesTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label = QLabel(strings.PLACEHOLDER_FILES)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(DashboardView())
 
 
 class PackagesTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        from PyQt6.QtCore import Qt
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label = QLabel(strings.PLACEHOLDER_PACKAGES)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
