@@ -40,6 +40,7 @@ DRIVE_EMPTY = "Empty — ready for use"
 DRIVE_MOUNT = "Mount"
 
 # Action labels
+ACTION_OPEN = "Open"
 ACTION_OPEN_FILE_LOCATION = "Open file location"
 ACTION_CHECK_UPDATES = "Check for updates"
 ACTION_ASSIGN_TAGS = "Assign tags…"
@@ -55,6 +56,12 @@ ACTION_SCRUB_NOW = "Scrub now"
 # Updates banner
 UPDATES_BANNER = "{total} updates available · {breakdown}"
 UPDATES_REVIEW = "Review"
+
+# Label modal
+LABEL_MODAL_TITLE = "Label drive: {name}"
+LABEL_MODAL_FIELD = "Label"
+LABEL_MODAL_COLOR = "Color"
+STUB_COMING_M3 = "Coming in M3"
 
 # Placeholder text for stub views
 PLACEHOLDER_FILES = "Files — coming in Milestone 1"

@@ -20,6 +20,9 @@ class Drive:
     used_bytes: int
     free_bytes: int
     fs_type: str
+    device_id: str = ""
+    label: str | None = None
+    color_hex: str | None = None
 
     @property
     def used_pct(self) -> float:

@@ -155,15 +155,17 @@ Filesystem  Mounted on  1B-blocks  Used  Available Fstype
 
 def test_resolve_name_fallback_no_by_id(monkeypatch, tmp_path):
     monkeypatch.setattr("backends.storage_backend._BY_ID", tmp_path / "nonexistent")
-    name = StorageBackend()._resolve_drive_name("/dev/sda99")
+    device_id, name = StorageBackend()._resolve_drive_info("/dev/sda99")
     assert name == "sda99"
+    assert device_id == "sda99"
 
 
 def test_resolve_name_returns_string_for_any_input(monkeypatch, tmp_path):
     monkeypatch.setattr("backends.storage_backend._BY_ID", tmp_path / "nonexistent")
     for dev in ("/dev/sda", "/dev/nvme0n1p1", "/dev/mmcblk0p1", "tmpfs"):
-        name = StorageBackend()._resolve_drive_name(dev)
+        device_id, name = StorageBackend()._resolve_drive_info(dev)
         assert isinstance(name, str) and len(name) > 0
+        assert isinstance(device_id, str) and len(device_id) > 0
 
 
 # ---------------------------------------------------------------------------

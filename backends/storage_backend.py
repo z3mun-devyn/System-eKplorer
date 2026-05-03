@@ -63,34 +63,39 @@ class StorageBackend:
                 used = int(parts[-3])
                 size = int(parts[-4])
                 mount_point = " ".join(parts[1:-4])
+                device_id, name = self._resolve_drive_info(source)
                 drives.append(Drive(
-                    name=self._resolve_drive_name(source),
+                    name=name,
                     device=source,
                     mount_point=mount_point,
                     total_bytes=size,
                     used_bytes=used,
                     free_bytes=avail,
                     fs_type=fstype,
+                    device_id=device_id,
                 ))
             except (ValueError, IndexError) as e:
                 log.warning("Could not parse df line %r: %s", line, e)
         return drives
 
-    def _resolve_drive_name(self, device: str) -> str:
+    def _resolve_drive_info(self, device: str) -> tuple[str, str]:
+        """Return (device_id, display_name) for device."""
+        basename = os.path.basename(device)
         if not _BY_ID.exists():
-            return os.path.basename(device)
+            return (basename, basename)
         try:
             return self._lookup_by_id(device)
         except OSError as e:
             log.warning("Could not read /dev/disk/by-id: %s", e)
-            return os.path.basename(device)
+            return (basename, basename)
 
-    def _lookup_by_id(self, device: str) -> str:
+    def _lookup_by_id(self, device: str) -> tuple[str, str]:
         device_path = Path(device)
         try:
             resolved = device_path.resolve()
         except OSError:
-            return os.path.basename(device)
+            basename = os.path.basename(device)
+            return (basename, basename)
 
         # Build map: resolved real path → list of by-id names
         candidates: list[str] = []
@@ -127,14 +132,16 @@ class StorageBackend:
                 except OSError:
                     pass
 
+        basename = os.path.basename(device)
         if not disk_level and not candidates:
-            return os.path.basename(device)
+            return (basename, basename)
 
         chosen = disk_level[0] if disk_level else candidates[0]
+        raw_id = chosen  # stable identifier before prettification
 
         # Skip wwn- entries — they carry no human-readable name
         if chosen.startswith("wwn-"):
-            return os.path.basename(device)
+            return (basename, basename)
 
         # Strip known bus prefixes
         for prefix in ("ata-", "nvme-", "usb-", "mmc-", "virtio-"):
@@ -146,8 +153,8 @@ class StorageBackend:
         chosen = _SERIAL_RE.sub("", chosen)
 
         # Replace underscores with spaces and tidy up
-        name = chosen.replace("_", " ").strip()
-        return name if name else os.path.basename(device)
+        display = chosen.replace("_", " ").strip()
+        return (raw_id, display if display else basename)
 
     def list_drives(self) -> list[Drive]:
         output = self._run_df()
@@ -168,6 +175,30 @@ class StorageBackend:
                 continue
             seen_mounts.add(d.mount_point)
             real.append(d)
+
+        self._attach_labels(real)
         return real
+
+    def _attach_labels(self, drives: list[Drive]) -> None:
+        try:
+            from models.database import open_db
+            ids = [d.device_id for d in drives if d.device_id]
+            if not ids:
+                return
+            placeholders = ",".join("?" * len(ids))
+            with open_db() as conn:
+                rows = conn.execute(
+                    f"SELECT device_id, label, color_hex FROM drive_labels"
+                    f" WHERE device_id IN ({placeholders})",
+                    ids,
+                ).fetchall()
+            label_map = {row["device_id"]: row for row in rows}
+            for drive in drives:
+                row = label_map.get(drive.device_id)
+                if row:
+                    drive.label = row["label"]
+                    drive.color_hex = row["color_hex"]
+        except Exception as e:
+            log.warning("Could not load drive labels: %s", e)
 
 
