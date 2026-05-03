@@ -41,3 +41,18 @@ class Drive:
     @property
     def free_str(self) -> str:
         return _fmt_bytes(self.free_bytes)
+
+
+@dataclass
+class UnmountedDrive:
+    name: str
+    device: str
+    size_bytes: int
+    fs_type: str
+    fs_label: str
+    is_encrypted: bool
+    device_id: str = ""
+
+    @property
+    def size_str(self) -> str:
+        return _fmt_bytes(self.size_bytes)

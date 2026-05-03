@@ -1,16 +1,20 @@
+import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 
 import strings
 from backends.storage_backend import StorageBackend
 from models.database import open_db
-from models.storage import Drive
+from models.storage import Drive, UnmountedDrive
 
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
+from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -29,6 +33,7 @@ _PIE_MARGIN = _PEN_WIDTH // 2 + 2
 
 _TILE_MIN_WIDTH = 360
 _MAX_TRACKED_COLS = 6
+_CARD_RADIUS = 7
 
 # 5×2 palette for drive labels (tag-editor spec §12)
 _LABEL_PALETTE: list[str] = [
@@ -51,8 +56,30 @@ def _contrast_color(hex_color: str) -> str:
     return "#000000" if luminance > 0.179 else "#ffffff"
 
 
+def _paint_card(widget: QWidget, hovered: bool) -> None:
+    """Shared card-background painter for drive tiles."""
+    painter = QPainter(widget)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    rect = widget.rect().adjusted(1, 1, -1, -1)
+    palette = widget.palette()
+
+    painter.setBrush(palette.color(QPalette.ColorRole.Base))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawRoundedRect(rect, _CARD_RADIUS, _CARD_RADIUS)
+
+    if hovered:
+        hl = QColor(palette.color(QPalette.ColorRole.Highlight))
+        hl.setAlphaF(0.08)
+        painter.setBrush(hl)
+        painter.drawRoundedRect(rect, _CARD_RADIUS, _CARD_RADIUS)
+
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(palette.color(QPalette.ColorRole.Mid), 1))
+    painter.drawRoundedRect(rect, _CARD_RADIUS, _CARD_RADIUS)
+
+
 class UsagePie(QWidget):
-    """Ring indicator: free arc + used arc drawn as two complementary arcs."""
+    """Solid-fill ring: free arc muted + used arc in highlight color."""
 
     def __init__(self, used_pct: float, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -84,6 +111,29 @@ class UsagePie(QWidget):
             painter.drawArc(rect, 90 * 16, span)
 
 
+class DashedRing(QWidget):
+    """Dashed ring outline for unmounted drives (usage unknown)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(_PIE_SIZE, _PIE_SIZE)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        rect = self.rect().adjusted(_PIE_MARGIN, _PIE_MARGIN, -_PIE_MARGIN, -_PIE_MARGIN)
+        color = QColor(self.palette().color(QPalette.ColorRole.WindowText))
+        color.setAlphaF(0.30)
+        pen = QPen(color)
+        pen.setWidth(_PEN_WIDTH)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawArc(rect, 0, 360 * 16)
+
+
 class LabelModal(QDialog):
     """Small modal for setting a drive label and color."""
 
@@ -106,13 +156,11 @@ class LabelModal(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        # Label field
         layout.addWidget(QLabel(strings.LABEL_MODAL_FIELD + ":"))
         self._label_edit = QLineEdit(drive.label or "")
         self._label_edit.setPlaceholderText("e.g. Work, Backup, Media…")
         layout.addWidget(self._label_edit)
 
-        # Color picker
         layout.addWidget(QLabel(strings.LABEL_MODAL_COLOR + ":"))
         color_container = QWidget()
         color_grid = QGridLayout(color_container)
@@ -133,7 +181,6 @@ class LabelModal(QDialog):
         layout.addWidget(color_container)
         self._refresh_swatches()
 
-        # Footer buttons
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel
             | QDialogButtonBox.StandardButton.Save
@@ -192,18 +239,20 @@ class DriveTile(QFrame):
     def __init__(self, drive: Drive, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._drive = drive
+        self._hovered = False
 
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setFrameShadow(QFrame.Shadow.Raised)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAutoFillBackground(False)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(160)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(16, 16, 16, 16)
 
-        # Header row: name on left, badge on right
+        # Header row: name on left, label badge on right
         header = QHBoxLayout()
         header.setSpacing(8)
 
@@ -215,9 +264,10 @@ class DriveTile(QFrame):
         name_label.setWordWrap(True)
         header.addWidget(name_label, stretch=1)
 
+        # Badge always allocated (fixed height) — empty+transparent when no label
         self._badge = QLabel()
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._badge.setVisible(False)
+        self._badge.setFixedHeight(20)
         header.addWidget(self._badge, stretch=0)
 
         layout.addLayout(header)
@@ -246,6 +296,17 @@ class DriveTile(QFrame):
 
         self._refresh_badge()
 
+    def paintEvent(self, event) -> None:
+        _paint_card(self, self._hovered)
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+
     def _refresh_badge(self) -> None:
         label = self._drive.label
         color = self._drive.color_hex
@@ -262,9 +323,9 @@ class DriveTile(QFrame):
                 f"  font-size: 11px;"
                 f"}}"
             )
-            self._badge.setVisible(True)
         else:
-            self._badge.setVisible(False)
+            self._badge.setText("")
+            self._badge.setStyleSheet("QLabel { background: transparent; }")
 
     def _show_context_menu(self, pos) -> None:
         menu = QMenu(self)
@@ -293,14 +354,181 @@ class DriveTile(QFrame):
         modal.open()
 
 
+class _MountWorker(QObject):
+    success = pyqtSignal(str)    # device path
+    error = pyqtSignal(str, str) # device path, error message
+
+    def __init__(self, drive: UnmountedDrive) -> None:
+        super().__init__()
+        self._drive = drive
+
+    def run(self) -> None:
+        try:
+            if self._drive.is_encrypted:
+                self._unlock_and_mount()
+            else:
+                self._plain_mount(self._drive.device)
+        except Exception as exc:
+            self.error.emit(self._drive.device, str(exc))
+
+    def _plain_mount(self, device: str) -> None:
+        result = subprocess.run(
+            ["udisksctl", "mount", "-b", device],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            msg = (result.stderr.strip() or result.stdout.strip()
+                   or "unknown error")
+            self.error.emit(self._drive.device, msg)
+        else:
+            self.success.emit(self._drive.device)
+
+    def _unlock_and_mount(self) -> None:
+        if self._drive.fs_type == "BitLocker" and not shutil.which("dislocker"):
+            self.error.emit(self._drive.device, strings.NOTICE_BITLOCKER_MISSING)
+            return
+
+        result = subprocess.run(
+            ["udisksctl", "unlock", "-b", self._drive.device],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            msg = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            self.error.emit(self._drive.device, msg)
+            return
+
+        mapped = self._parse_unlock_output(result.stdout)
+        if not mapped:
+            self.error.emit(
+                self._drive.device,
+                f"Could not determine mapped device after unlock",
+            )
+            return
+
+        self._plain_mount(mapped)
+
+    @staticmethod
+    def _parse_unlock_output(output: str) -> str | None:
+        m = re.search(r"as (/dev/\S+?)\.?\s*$", output, re.MULTILINE)
+        return m.group(1) if m else None
+
+
+class UnmountedDriveTile(QFrame):
+    mount_success = pyqtSignal()
+    mount_error = pyqtSignal(str)
+
+    def __init__(self, drive: UnmountedDrive, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._drive = drive
+        self._hovered = False
+
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAutoFillBackground(False)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(160)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        opacity = QGraphicsOpacityEffect(self)
+        opacity.setOpacity(0.6)
+        self.setGraphicsEffect(opacity)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        # Header row: name on left, status icon on right
+        header = QHBoxLayout()
+        header.setSpacing(8)
+
+        name_label = QLabel(drive.name)
+        font = name_label.font()
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 1)
+        name_label.setFont(font)
+        name_label.setWordWrap(True)
+        header.addWidget(name_label, stretch=1)
+
+        icon_label = QLabel()
+        icon_label.setFixedHeight(20)
+        if drive.is_encrypted:
+            icon = QIcon.fromTheme("security-high")
+            if not icon.isNull():
+                icon_label.setPixmap(icon.pixmap(16, 16))
+            else:
+                icon_label.setText("🔒")
+        else:
+            icon = QIcon.fromTheme("drive-harddisk")
+            if not icon.isNull():
+                icon_label.setPixmap(icon.pixmap(16, 16))
+            else:
+                icon_label.setText("⏏")
+        header.addWidget(icon_label, stretch=0)
+
+        layout.addLayout(header)
+
+        info_label = QLabel(f"{drive.device}  ·  {drive.fs_type}")
+        info_label.setStyleSheet("color: palette(mid);")
+        layout.addWidget(info_label)
+
+        body_row = QHBoxLayout()
+        body_row.setSpacing(16)
+        body_row.addWidget(DashedRing())
+
+        body_detail = QVBoxLayout()
+        body_detail.setSpacing(2)
+        body_detail.addStretch()
+        action_text = (
+            strings.ACTION_CLICK_TO_UNLOCK if drive.is_encrypted
+            else strings.ACTION_CLICK_TO_MOUNT
+        )
+        body_detail.addWidget(QLabel(action_text))
+        size_label = QLabel(drive.size_str)
+        size_label.setStyleSheet("color: palette(mid);")
+        body_detail.addWidget(size_label)
+        body_detail.addStretch()
+
+        body_row.addLayout(body_detail)
+        body_row.addStretch()
+        layout.addLayout(body_row)
+
+    def paintEvent(self, event) -> None:
+        _paint_card(self, self._hovered)
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._start_mount()
+
+    def _start_mount(self) -> None:
+        self._thread = QThread(parent=self)
+        self._worker = _MountWorker(self._drive)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.success.connect(lambda _dev: self.mount_success.emit())
+        self._worker.error.connect(lambda _dev, msg: self.mount_error.emit(msg))
+        self._worker.success.connect(self._thread.quit)
+        self._worker.error.connect(lambda _dev, _msg: self._thread.quit())
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.start()
+
+
 class _DriveLoader(QObject):
-    drives_ready = pyqtSignal(list)
+    loads_ready = pyqtSignal(list, list)  # (mounted, unmounted)
     load_failed = pyqtSignal(str)
 
     def run(self) -> None:
         try:
-            drives = StorageBackend().list_drives()
-            self.drives_ready.emit(drives)
+            backend = StorageBackend()
+            mounted = backend.list_drives()
+            unmounted = backend.list_unmounted_devices()
+            self.loads_ready.emit(mounted, unmounted)
         except Exception as exc:
             self.load_failed.emit(str(exc))
 
@@ -311,23 +539,36 @@ class DashboardView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._tiles: list[DriveTile] = []
+        self._inactive_tiles: list[UnmountedDriveTile] = []
         self._col_count: int = 0
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        outer.addWidget(self._scroll)
+        outer.addWidget(self._scroll, stretch=1)
+
+        # Toast bar at the very bottom of the view
+        self._toast = QLabel()
+        self._toast.setVisible(False)
+        self._toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._toast.setStyleSheet(
+            "QLabel { background: palette(mid); color: palette(window-text);"
+            " padding: 8px 16px; border-top: 1px solid palette(dark); }"
+        )
+        outer.addWidget(self._toast)
 
         container = QWidget()
         clayout = QVBoxLayout(container)
         clayout.setContentsMargins(16, 16, 16, 16)
         clayout.setSpacing(0)
 
-        section_header = QLabel("Physical Devices")
+        # ── Active section ──────────────────────────────────────────────────
+        section_header = QLabel(strings.SECTION_ACTIVE)
         hfont = section_header.font()
         hfont.setBold(True)
         hfont.setPointSize(hfont.pointSize() + 3)
@@ -345,14 +586,38 @@ class DashboardView(QWidget):
         self._grid.setSpacing(12)
         self._grid.setContentsMargins(0, 0, 0, 0)
         clayout.addWidget(self._grid_widget)
+
+        # ── Inactive section (shown only when unmounted devices exist) ───────
+        self._inactive_section = QWidget()
+        self._inactive_section.setVisible(False)
+        inactive_layout = QVBoxLayout(self._inactive_section)
+        inactive_layout.setContentsMargins(0, 24, 0, 0)
+        inactive_layout.setSpacing(12)
+
+        inactive_header = QLabel(strings.SECTION_INACTIVE)
+        ifont = inactive_header.font()
+        ifont.setBold(True)
+        ifont.setPointSize(ifont.pointSize() + 3)
+        inactive_header.setFont(ifont)
+        inactive_layout.addWidget(inactive_header)
+
+        self._inactive_grid_widget = QWidget()
+        self._inactive_grid = QGridLayout(self._inactive_grid_widget)
+        self._inactive_grid.setSpacing(12)
+        self._inactive_grid.setContentsMargins(0, 0, 0, 0)
+        inactive_layout.addWidget(self._inactive_grid_widget)
+
+        clayout.addWidget(self._inactive_section)
         clayout.addStretch()
 
         self._scroll.setWidget(container)
         self._start_load()
 
+    # ── Responsive layout ────────────────────────────────────────────────────
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._tiles:
+        if self._tiles or self._inactive_tiles:
             self._relayout()
 
     def _relayout(self) -> None:
@@ -360,49 +625,81 @@ class DashboardView(QWidget):
         if vp_width <= 0:
             return
         spacing = self._grid.spacing()
-        available = vp_width
-        cols = max(1, (available + spacing) // (_TILE_MIN_WIDTH + spacing))
+        cols = max(1, (vp_width + spacing) // (_TILE_MIN_WIDTH + spacing))
         if cols == self._col_count:
             return
         self._col_count = cols
-        self._rebuild_grid()
+        self._rebuild_grid(self._grid, self._tiles, cols)
+        self._rebuild_grid(self._inactive_grid, self._inactive_tiles, cols)
 
-    def _rebuild_grid(self) -> None:
-        while self._grid.count():
-            self._grid.takeAt(0)
-
+    @staticmethod
+    def _rebuild_grid(grid: QGridLayout, tiles: list, col_count: int) -> None:
+        while grid.count():
+            grid.takeAt(0)
         for c in range(_MAX_TRACKED_COLS):
-            self._grid.setColumnStretch(c, 0)
+            grid.setColumnStretch(c, 0)
+        if not tiles:
+            return
+        for i, tile in enumerate(tiles):
+            row, col = divmod(i, col_count)
+            grid.addWidget(tile, row, col)
+        for c in range(col_count):
+            grid.setColumnStretch(c, 1)
 
-        for i, tile in enumerate(self._tiles):
-            row, col = divmod(i, self._col_count)
-            self._grid.addWidget(tile, row, col)
-
-        for c in range(self._col_count):
-            self._grid.setColumnStretch(c, 1)
+    # ── Thread wiring ────────────────────────────────────────────────────────
 
     def _start_load(self) -> None:
+        if hasattr(self, "_thread") and self._thread.isRunning():
+            return
         self._thread = QThread(parent=self)
         self._worker = _DriveLoader()
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.drives_ready.connect(self._on_drives_ready)
+        self._worker.loads_ready.connect(self._on_loads_ready)
         self._worker.load_failed.connect(self._on_load_failed)
-        self._worker.drives_ready.connect(self._thread.quit)
+        self._worker.loads_ready.connect(self._thread.quit)
         self._worker.load_failed.connect(self._thread.quit)
         self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()
 
-    def _on_drives_ready(self, drives: list) -> None:
-        if not drives:
-            self._status_label.setText("No drives found.")
-            return
+    def _reload(self) -> None:
+        for tile in self._tiles:
+            tile.setParent(None)
+        for tile in self._inactive_tiles:
+            tile.setParent(None)
+        self._tiles = []
+        self._inactive_tiles = []
+        self._col_count = 0
+        self._grid_widget.setVisible(False)
+        self._inactive_section.setVisible(False)
+        self._status_label.setText("Loading drives…")
+        self._status_label.setVisible(True)
+        self._start_load()
 
-        self._status_label.setVisible(False)
-        self._tiles = [DriveTile(drive) for drive in drives]
-        self._grid_widget.setVisible(True)
+    def _on_loads_ready(self, mounted: list, unmounted: list) -> None:
+        if not mounted:
+            self._status_label.setText("No drives found.")
+        else:
+            self._status_label.setVisible(False)
+            self._tiles = [DriveTile(drive) for drive in mounted]
+            self._grid_widget.setVisible(True)
+
+        if unmounted:
+            self._inactive_tiles = []
+            for drive in unmounted:
+                tile = UnmountedDriveTile(drive)
+                tile.mount_success.connect(self._reload)
+                tile.mount_error.connect(self._show_toast)
+                self._inactive_tiles.append(tile)
+            self._inactive_section.setVisible(True)
+
         self._col_count = 0
         self._relayout()
 
     def _on_load_failed(self, error: str) -> None:
         self._status_label.setText(strings.ERR_PARSE_FAILURE.format(source="storage"))
+
+    def _show_toast(self, message: str) -> None:
+        self._toast.setText(message)
+        self._toast.setVisible(True)
+        QTimer.singleShot(5000, self._toast.hide)

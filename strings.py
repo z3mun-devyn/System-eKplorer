@@ -63,6 +63,20 @@ LABEL_MODAL_FIELD = "Label"
 LABEL_MODAL_COLOR = "Color"
 STUB_COMING_M3 = "Coming in M3"
 
+# Dashboard sections
+SECTION_ACTIVE = "Physical Devices"
+SECTION_INACTIVE = "Connected — not active"
+
+# Unmounted drive actions
+ACTION_CLICK_TO_MOUNT = "Click to mount"
+ACTION_CLICK_TO_UNLOCK = "Click to unlock"
+
+# Notifications
+NOTICE_BITLOCKER_MISSING = "BitLocker support requires the dislocker package"
+NOTICE_MOUNT_SUCCESS = "Mounted {device}"
+ERR_MOUNT_FAILED = "Could not mount {device}: {error}"
+ERR_UNLOCK_FAILED = "Could not unlock {device}: {error}"
+
 # Placeholder text for stub views
 PLACEHOLDER_FILES = "Files — coming in Milestone 1"
 PLACEHOLDER_PACKAGES = "Packages — coming in Milestone 3"
