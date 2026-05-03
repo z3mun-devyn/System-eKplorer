@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import strings
 from backends.storage_backend import StorageBackend
+from backends.udisks_watcher import UDisks2Watcher
 from models.database import open_db
 from models.storage import Drive, UnmountedDrive
 
@@ -533,6 +534,9 @@ class _DriveLoader(QObject):
             self.load_failed.emit(str(exc))
 
 
+_POLL_INTERVAL_MS = 15_000
+
+
 class DashboardView(QWidget):
     """Files-tab landing page: responsive grid of drive tiles."""
 
@@ -541,6 +545,7 @@ class DashboardView(QWidget):
         self._tiles: list[DriveTile] = []
         self._inactive_tiles: list[UnmountedDriveTile] = []
         self._col_count: int = 0
+        self._initial_load_done: bool = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -611,6 +616,16 @@ class DashboardView(QWidget):
         clayout.addStretch()
 
         self._scroll.setWidget(container)
+
+        # ── Event-driven refresh via udisks2 D-Bus + 15-second poll fallback ──
+        self._watcher = UDisks2Watcher(parent=self)
+        self._watcher.storage_changed.connect(self._on_storage_changed)
+
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(_POLL_INTERVAL_MS)
+        self._poll_timer.timeout.connect(self._on_storage_changed)
+        self._poll_timer.start()
+
         self._start_load()
 
     # ── Responsive layout ────────────────────────────────────────────────────
@@ -662,7 +677,12 @@ class DashboardView(QWidget):
         self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()
 
+    def _on_storage_changed(self) -> None:
+        """Called by D-Bus watcher or polling timer; triggers a diff refresh."""
+        self._start_load()
+
     def _reload(self) -> None:
+        """Full teardown + re-load; called after a mount/unmount completes."""
         for tile in self._tiles:
             tile.setParent(None)
         for tile in self._inactive_tiles:
@@ -670,6 +690,7 @@ class DashboardView(QWidget):
         self._tiles = []
         self._inactive_tiles = []
         self._col_count = 0
+        self._initial_load_done = False
         self._grid_widget.setVisible(False)
         self._inactive_section.setVisible(False)
         self._status_label.setText("Loading drives…")
@@ -677,6 +698,13 @@ class DashboardView(QWidget):
         self._start_load()
 
     def _on_loads_ready(self, mounted: list, unmounted: list) -> None:
+        if not self._initial_load_done:
+            self._initial_load_done = True
+            self._build_initial(mounted, unmounted)
+        else:
+            self._apply_diff(mounted, unmounted)
+
+    def _build_initial(self, mounted: list, unmounted: list) -> None:
         if not mounted:
             self._status_label.setText("No drives found.")
         else:
@@ -685,7 +713,6 @@ class DashboardView(QWidget):
             self._grid_widget.setVisible(True)
 
         if unmounted:
-            self._inactive_tiles = []
             for drive in unmounted:
                 tile = UnmountedDriveTile(drive)
                 tile.mount_success.connect(self._reload)
@@ -695,6 +722,70 @@ class DashboardView(QWidget):
 
         self._col_count = 0
         self._relayout()
+
+    def _apply_diff(self, mounted: list, unmounted: list) -> None:
+        """Update tiles in-place; rebuild only what changed. No-op if unchanged."""
+        current_active = {t._drive.device: t for t in self._tiles}
+        current_inactive = {t._drive.device: t for t in self._inactive_tiles}
+
+        new_active = {d.device: d for d in mounted}
+        new_inactive = {d.device: d for d in unmounted}
+
+        if set(current_active) == set(new_active) and \
+                set(current_inactive) == set(new_inactive):
+            # Device sets identical — update labels on existing tiles only
+            for dev, drive in new_active.items():
+                if dev in current_active:
+                    current_active[dev]._drive = drive
+                    current_active[dev]._refresh_badge()
+            return
+
+        scrollbar = self._scroll.verticalScrollBar()
+        saved_pos = scrollbar.value()
+
+        # Reconcile active tiles
+        new_tiles: list[DriveTile] = []
+        for dev, drive in new_active.items():
+            if dev in current_active:
+                tile = current_active.pop(dev)
+                tile._drive = drive
+                tile._refresh_badge()
+            else:
+                tile = DriveTile(drive)
+            new_tiles.append(tile)
+        for tile in current_active.values():
+            tile.setParent(None)
+
+        # Reconcile inactive tiles
+        new_inactive_tiles: list[UnmountedDriveTile] = []
+        for dev, drive in new_inactive.items():
+            if dev in current_inactive:
+                new_inactive_tiles.append(current_inactive.pop(dev))
+            else:
+                tile = UnmountedDriveTile(drive)
+                tile.mount_success.connect(self._reload)
+                tile.mount_error.connect(self._show_toast)
+                new_inactive_tiles.append(tile)
+        for tile in current_inactive.values():
+            tile.setParent(None)
+
+        self._tiles = new_tiles
+        self._inactive_tiles = new_inactive_tiles
+
+        if self._tiles:
+            self._status_label.setVisible(False)
+            self._grid_widget.setVisible(True)
+        else:
+            self._grid_widget.setVisible(False)
+            self._status_label.setText("No drives found.")
+            self._status_label.setVisible(True)
+
+        self._inactive_section.setVisible(bool(self._inactive_tiles))
+
+        self._col_count = 0
+        self._relayout()
+
+        QTimer.singleShot(0, lambda: scrollbar.setValue(saved_pos))
 
     def _on_load_failed(self, error: str) -> None:
         self._status_label.setText(strings.ERR_PARSE_FAILURE.format(source="storage"))
