@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -18,7 +19,7 @@ import strings
 from views.dashboard_view import DashboardView
 
 
-class FilesTab(QWidget):
+class DashboardTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -30,7 +31,6 @@ class PackagesTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        from PyQt6.QtCore import Qt
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label = QLabel(strings.PLACEHOLDER_PACKAGES)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -44,12 +44,18 @@ class MainWindow(QMainWindow):
         self.resize(1100, 700)
 
         self._tabs = QTabWidget()
-        self._files_tab = FilesTab()
+        self._dashboard_tab = DashboardTab()
+        self._file_manager_stub = QWidget()
         self._packages_tab = PackagesTab()
 
-        self._tabs.addTab(self._files_tab, strings.TAB_FILES)
+        self._tabs.addTab(self._dashboard_tab, strings.TAB_DASHBOARD)
+        fm_index = self._tabs.addTab(self._file_manager_stub, strings.TAB_FILE_MANAGER)
         self._tabs.addTab(self._packages_tab, strings.TAB_PACKAGES)
-        self._tabs.setCurrentIndex(0)  # Files selected by default (spec §7)
+
+        self._tabs.setTabEnabled(fm_index, False)
+        self._tabs.setTabToolTip(fm_index, strings.TAB_FILE_MANAGER_TOOLTIP)
+
+        self._tabs.setCurrentIndex(0)  # Dashboard selected by default (spec §7)
 
         self.setCentralWidget(self._tabs)
 

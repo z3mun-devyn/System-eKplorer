@@ -5,7 +5,9 @@ APP_TITLE = "System eKploiter"
 APP_VERSION = "0.1-alpha"
 
 # Tab bar
-TAB_FILES = "Files"
+TAB_DASHBOARD = "Dashboard"
+TAB_FILE_MANAGER = "File Manager"
+TAB_FILE_MANAGER_TOOLTIP = "Coming soon"
 TAB_PACKAGES = "Packages"
 
 # §4 terminology translations: Linux term → eKploiter UI
