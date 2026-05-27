@@ -44,21 +44,20 @@ def test_directory_created_with_mode_0700(tmp_path):
 # Schema versioning
 # ---------------------------------------------------------------------------
 
-def test_schema_version_row_inserted(tmp_path):
+def test_user_version_matches_current(tmp_path):
     db_path = tmp_path / "data.db"
     with open_db(db_path) as conn:
-        row = conn.execute("SELECT version FROM schema_version").fetchone()
-    assert row is not None
-    assert row["version"] == CURRENT_VERSION
+        uv = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert uv == CURRENT_VERSION
 
 
-def test_schema_version_not_duplicated_on_reopen(tmp_path):
+def test_user_version_stable_on_reopen(tmp_path):
     db_path = tmp_path / "data.db"
     with open_db(db_path):
         pass
     with open_db(db_path) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-    assert count == 1
+        uv = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert uv == CURRENT_VERSION
 
 
 def test_drive_labels_table_exists(tmp_path):

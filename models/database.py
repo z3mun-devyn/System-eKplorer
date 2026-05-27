@@ -4,39 +4,61 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".local" / "share" / "ekploiter" / "data.db"
 
-CURRENT_VERSION = 1
+CURRENT_VERSION = 2
 
 _V1_DDL = [
     """
-    CREATE TABLE IF NOT EXISTS schema_version (
-        version INTEGER NOT NULL
-    )
-    """,
-    """
     CREATE TABLE IF NOT EXISTS drive_labels (
         device_id TEXT PRIMARY KEY,
-        label TEXT NOT NULL,
+        label     TEXT NOT NULL,
         color_hex TEXT,
         updated_at TEXT NOT NULL
     )
     """,
 ]
 
+_V2_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS tags (
+        name      TEXT PRIMARY KEY,
+        color_hex TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS package_tags (
+        package_source TEXT NOT NULL,
+        package_name   TEXT NOT NULL,
+        tag_name       TEXT NOT NULL REFERENCES tags(name) ON DELETE CASCADE,
+        PRIMARY KEY (package_source, package_name, tag_name)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_pkg_tags
+        ON package_tags (package_source, package_name)
+    """,
+]
+
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
-    ).fetchone()
-    if row is None:
-        for stmt in _V1_DDL:
-            conn.execute(stmt)
-        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_VERSION,))
-        conn.commit()
+    uv = conn.execute("PRAGMA user_version").fetchone()[0]
+    if uv >= CURRENT_VERSION:
         return
 
-    version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    # Future migrations go here: if version < 2: _migrate_v2(conn); ...
-    _ = version  # nothing to migrate in v1
+    if uv == 0:
+        # Detect v1 DB from M2 by presence of legacy schema_version table.
+        # If absent this is a fresh DB; create V1 tables first.
+        has_legacy = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        ).fetchone() is not None
+        if not has_legacy:
+            for stmt in _V1_DDL:
+                conn.execute(stmt)
+
+    # IF NOT EXISTS makes V2 DDL safe for both fresh and v1 upgrade paths.
+    for stmt in _V2_DDL:
+        conn.execute(stmt)
+    conn.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
+    conn.commit()
 
 
 @contextmanager
@@ -47,6 +69,7 @@ def open_db(path: Path | None = None):
     conn = sqlite3.connect(target)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     try:
         _apply_schema(conn)
         yield conn
