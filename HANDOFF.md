@@ -15,26 +15,39 @@
   with 15s polling fallback, 250ms debounce, unmounted device 
   tiles with lock icon + "Click to unlock," eject affordance 
   for removable drives, EFI/small partition filter
-- Test count: 67/67 passing as of M2
+- M3: Package list — dpkg-query backend, QListView + custom 
+  delegate, category sidebar, async loading with skeleton rows, 
+  three-tab structure (Dashboard | File Manager [stub] | Packages)
+- M4: Tag system — schema v2 migration, tag editor modal, sidebar
+  Tags section, three-dot menu, pill rendering in delegate,
+  AND-combine filter, tag persistence via SQLite
 
-## Pending before M3 starts
-- Prep commit: rename 'Files' tab to 'Dashboard', add greyed 
-  'File Manager' stub tab between Dashboard and Packages
+## Test count
+- 154/154 passing as of M4
 
-## M3 goal
-Package list (apt only, read-only). See Appendix B of spec 
-for the exact opening prompt.
+## M5 goal
+Uninstall (first destructive action).
+Three-dot menu "Uninstall" flow with confirmation modal.
+Polkit prompt at action time. Activity log entry on uninstall.
+Acceptance: user can uninstall a package; log records it.
+Adding Uninstall to the three-dot menu is a one-line change in 
+PackagesView._show_menu_for_entry() — the comment marks the spot.
 
-## Setup specifics on this machine
-- Kubuntu 26.04 LTS on T-Force 240GB SSD (the test drive)
+## Setup
+- Current dev machine: Ubuntu 24.04 + Plasma 5.27
+  (original dev machine was Kubuntu 26.04 + Plasma 6)
+- theme.py integration testing deferred to a Plasma 6 machine
 - Python venv at ~/ekploiter/.venv — always activate before 
   running or testing
-- drives: T-Force (Main/root), WD Black SN8100 (eui.xxx — 
-  labelled WD_Black SN8100), Lexar NM970 (dm-name-bitlk-xxx 
-  — BitLocker container, labelled Lexar NM970), Crucial T705 
-  (Realtek RTL9210B bridge — labelled Crucial T705)
-- BitLocker container shows as unmounted tile — expected, 
-  fix requires Windows-side BitLocker-off procedure
+
+## How to run
+cd ~/ekploiter && source .venv/bin/activate && python main.py
+
+## How to test
+cd ~/ekploiter && source .venv/bin/activate && pytest -v
+
+## How to start Claude Code
+cd ~/ekploiter && source .venv/bin/activate && claude
 
 ## Key architectural decisions (not in spec)
 - dpkg-query as package data source, NOT apt list --installed
@@ -47,11 +60,25 @@ for the exact opening prompt.
 - strings.py is the single string authority — no hardcoded 
   user-facing text anywhere
 
-## How to run
-cd ~/ekploiter && source .venv/bin/activate && python main.py
-
-## How to test
-cd ~/ekploiter && source .venv/bin/activate && pytest -v
-
-## How to start Claude Code
-cd ~/ekploiter && source .venv/bin/activate && claude
+## M4 architectural decisions
+- Schema versioning: PRAGMA user_version (not schema_version table).
+  M2 schema retroactively v1; detected by presence of schema_version 
+  table (user_version=0 + schema_version table exists → v1 DB).
+  schema_version table preserved on v1→v2 migration, not dropped.
+- tags table: name TEXT PRIMARY KEY (not id INTEGER). No rename 
+  support needed at this stage; name is stable identity.
+- package_tags references tag_name → tags.name ON DELETE CASCADE.
+  Index idx_pkg_tags(package_source, package_name) for delegate.
+- TagRepository lives in backends/tags_backend.py (not models/database.py).
+- Tag modal state (name field, swatch, pill toggles) persists across 
+  tab switches because modal is a child widget of PackagesView — no 
+  re-init on hide/show.
+- Delegate does NOT hit SQLite during paint. PackagesView bulk-loads 
+  all assignments on startup and on every save via load_all_assignments().
+- Three-dot menu: eventFilter on list viewport; left-click within 
+  dots_rect(row_rect) triggers menu. Right-click on row also works 
+  (customContextMenuRequested fallback).
+- Filter: AND-combines category + tag filters. Clicking the active 
+  tag again clears it (toggle). Switching category preserves tag filter.
+- Pill overflow: delegate shows at most MAX_PILLS=4 pills; "…+N" 
+  muted indicator for remaining count.
