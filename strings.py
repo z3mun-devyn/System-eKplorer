@@ -1,5 +1,6 @@
 # Centralised terminology layer (spec §4).
 # All user-facing strings live here so Linux idioms can be revised globally.
+# Also home to shared color utilities used across views.
 
 APP_TITLE = "System eKploiter"
 APP_VERSION = "0.1-alpha"
@@ -96,3 +97,130 @@ CONFIRM_UNINSTALL_TITLE = "Uninstall {name}?"
 CONFIRM_UNINSTALL_BODY = (
     "This will remove the following from your system:"
 )
+
+# Packages view
+PACKAGES_LOADING = "Loading apps…"
+PACKAGES_EMPTY = "No apps found."
+PACKAGES_COUNT = "{n} apps installed"
+
+# Package section → Windows-friendly category name
+PACKAGE_CATEGORIES: dict[str, str] = {
+    "admin":         "System Tools",
+    "comm":          "Internet",
+    "database":      "Development",
+    "debug":         "Development",
+    "devel":         "Development",
+    "doc":           "Documentation",
+    "editors":       "Text Editors",
+    "education":     "Education",
+    "electronics":   "Science",
+    "embedded":      "Development",
+    "fonts":         "Fonts",
+    "games":         "Games",
+    "gnome":         "Desktop",
+    "golang":        "Development",
+    "graphics":      "Photos & Graphics",
+    "hamradio":      "Science",
+    "haskell":       "Development",
+    "httpd":         "Internet",
+    "image":         "Photos & Graphics",
+    "interpreters":  "Development",
+    "introspection": "System Libraries",
+    "java":          "Development",
+    "javascript":    "Development",
+    "kde":           "Desktop",
+    "kernel":        "System Tools",
+    "lang":          "Development",
+    "libdevel":      "Development",
+    "libs":          "System Libraries",
+    "lisp":          "Development",
+    "localization":  "Language",
+    "mail":          "Email & Messaging",
+    "math":          "Science",
+    "misc":          "Other",
+    "multimedia":    "Audio & Video",
+    "net":           "Internet",
+    "news":          "Email & Messaging",
+    "ocaml":         "Development",
+    "office":        "Office",
+    "oldlibs":       "System Libraries",
+    "otherosfs":     "System Tools",
+    "perl":          "Development",
+    "php":           "Development",
+    "python":        "Development",
+    "python3":       "Development",
+    "ruby":          "Development",
+    "science":       "Science",
+    "security":      "Security",
+    "shells":        "System Tools",
+    "sound":         "Audio & Video",
+    "tex":           "Office",
+    "text":          "Text Editors",
+    "utils":         "System Tools",
+    "vcs":           "Development",
+    "video":         "Audio & Video",
+    "web":           "Internet",
+    "x11":           "Desktop",
+    "xfce":          "Desktop",
+    "zope":          "Development",
+}
+
+PACKAGE_CATEGORY_DEFAULT = "Other"
+
+
+def package_category(section: str) -> str:
+    """Map a dpkg section string to a Windows-friendly category name."""
+    return PACKAGE_CATEGORIES.get(section or "", PACKAGE_CATEGORY_DEFAULT)
+
+
+# ── Shared color utilities ────────────────────────────────────────────────────
+
+# 5×2 swatch palette — used for drive labels and tag colors
+TAG_PALETTE: list[str] = [
+    "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#1abc9c",
+    "#3498db", "#9b59b6", "#e91e63", "#795548", "#607d8b",
+]
+TAG_PALETTE_COLS = 5
+
+
+def contrast_color(hex_color: str) -> str:
+    """Return #000000 or #ffffff for best contrast against hex_color."""
+    r = int(hex_color[1:3], 16) / 255
+    g = int(hex_color[3:5], 16) / 255
+    b = int(hex_color[5:7], 16) / 255
+
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    lum = 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+    return "#000000" if lum > 0.179 else "#ffffff"
+
+
+# ── Tag editor modal ─────────────────────────────────────────────────────────
+
+TAG_EDITOR_TITLE           = "Tags for {name}"
+TAG_EDITOR_SUBTITLE        = "Apply existing tags or create a new one"
+TAG_EDITOR_ASSIGN_HEADER   = "ASSIGN EXISTING"
+TAG_EDITOR_NO_TAGS         = "No tags yet — create one below"
+TAG_EDITOR_CREATE_HEADER   = "OR CREATE NEW"
+TAG_EDITOR_NAME_PLACEHOLDER = "Tag name"
+TAG_EDITOR_SAVE_BTN        = "Assign tag"
+TAG_EDITOR_CANCEL_BTN      = "Cancel"
+
+# Legacy aliases — used by views/tag_modal.py until it is removed in M4
+TAG_MODAL_TITLE            = TAG_EDITOR_TITLE
+TAG_MODAL_SUBTITLE         = TAG_EDITOR_SUBTITLE
+TAG_MODAL_EXISTING_HEADER  = TAG_EDITOR_ASSIGN_HEADER
+TAG_MODAL_NO_TAGS          = TAG_EDITOR_NO_TAGS
+TAG_MODAL_CREATE_HEADER    = TAG_EDITOR_CREATE_HEADER
+TAG_MODAL_NAME_PLACEHOLDER = TAG_EDITOR_NAME_PLACEHOLDER
+TAG_MODAL_SAVE_BTN         = TAG_EDITOR_SAVE_BTN
+TAG_MODAL_CANCEL_BTN       = TAG_EDITOR_CANCEL_BTN
+TAG_MODAL_CREATE_BTN       = "Create & assign"
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+SIDEBAR_CATEGORIES = "CATEGORIES"
+SIDEBAR_TAGS = "TAGS"
+SIDEBAR_ALL = "All"
+SIDEBAR_NEW_TAG = "+ New tag"
