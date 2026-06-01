@@ -4,7 +4,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".local" / "share" / "ekploiter" / "data.db"
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 5
 
 _V1_DDL = [
     """
@@ -38,6 +38,40 @@ _V2_DDL = [
     """,
 ]
 
+_V3_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
+]
+
+_V4_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS recent_paths (
+        path          TEXT    NOT NULL,
+        type          TEXT    NOT NULL CHECK(type IN ('file', 'location')),
+        last_accessed INTEGER NOT NULL,
+        PRIMARY KEY (path, type)
+    )
+    """,
+]
+
+_V5_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS file_tags (
+        path     TEXT NOT NULL,
+        tag_name TEXT NOT NULL REFERENCES tags(name) ON DELETE CASCADE,
+        PRIMARY KEY (path, tag_name)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_file_tags_path
+        ON file_tags (path)
+    """,
+]
+
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     uv = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -54,9 +88,23 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
             for stmt in _V1_DDL:
                 conn.execute(stmt)
 
-    # IF NOT EXISTS makes V2 DDL safe for both fresh and v1 upgrade paths.
-    for stmt in _V2_DDL:
-        conn.execute(stmt)
+    if uv < 2:
+        # IF NOT EXISTS makes V2 DDL safe for both fresh and v1 upgrade paths.
+        for stmt in _V2_DDL:
+            conn.execute(stmt)
+
+    if uv < 3:
+        for stmt in _V3_DDL:
+            conn.execute(stmt)
+
+    if uv < 4:
+        for stmt in _V4_DDL:
+            conn.execute(stmt)
+
+    if uv < 5:
+        for stmt in _V5_DDL:
+            conn.execute(stmt)
+
     conn.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
     conn.commit()
 
