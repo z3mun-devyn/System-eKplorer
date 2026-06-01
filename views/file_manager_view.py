@@ -42,7 +42,7 @@ from views.properties_panel import PropertiesPanel
 from views.terminal_view import TerminalView
 from views.trash_view import TrashView
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QMimeData, QUrl, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -172,15 +172,16 @@ class FileManagerView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._settings        = SettingsRepository()
-        self._current_path    = Path.home()
+        self._settings           = SettingsRepository()
+        self._current_path       = Path.home()
         self._mounted_drives: list[Drive] = []
         self._clipboard: FmClipboard | None = None
         self._ops_thread: QThread | None = None
         self._ops_worker: _FileOpsWorker | None = None
         self._trash_thread: QThread | None = None
         self._trash_worker: _TrashWorker | None = None
-        self._in_trash_mode   = False
+        self._in_trash_mode      = False
+        self._last_op_target_dir: Path | None = None
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -294,6 +295,9 @@ class FileManagerView(QWidget):
         QShortcut(QKeySequence("F2"), self).activated.connect(
             lambda: self._on_action_requested(
                 "rename_inline", self._left_view._get_selected_entries()))
+
+        # ── System clipboard → paste-enabled state ────────────────────────────
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
 
         # ── Restore persisted state ────────────────────────────────────────────
         self._restore_state()
@@ -671,9 +675,9 @@ class FileManagerView(QWidget):
 
         elif action in ("cut", "copy"):
             if path_list:
-                self._clipboard = FmClipboard(
-                    operation=action, paths=path_list)
-                self._left_view.set_paste_enabled(True)
+                self._clipboard = FmClipboard(operation=action, paths=path_list)
+                self._set_system_clipboard(action, path_list)
+                # paste-enabled state updated by _on_clipboard_changed signal
 
         elif action == "copy_path":
             if path_list:
@@ -762,12 +766,33 @@ class FileManagerView(QWidget):
                     self._btn_properties.setChecked(True)
 
     def _do_paste(self) -> None:
-        if not self._clipboard or self._clipboard.is_empty():
+        # ── Read from system clipboard (primary source of truth) ──────────────
+        system_mime = QApplication.clipboard().mimeData()
+        if system_mime and system_mime.hasUrls():
+            urls = [u for u in system_mime.urls() if u.isLocalFile()]
+            src_paths = [p for p in (Path(u.toLocalFile()) for u in urls)
+                         if p.exists()]
+            # Determine copy vs move from cut markers
+            is_cut = False
+            if system_mime.hasFormat("application/x-kde-cutselection"):
+                is_cut = (bytes(system_mime.data(
+                    "application/x-kde-cutselection")).decode(errors="replace")
+                    .strip() == "1")
+            if not is_cut and system_mime.hasFormat("x-special/gnome-copied-files"):
+                gnome = bytes(system_mime.data(
+                    "x-special/gnome-copied-files")).decode(errors="replace")
+                is_cut = gnome.startswith("cut\n")
+            op = "move" if is_cut else "copy"
+        elif self._clipboard and not self._clipboard.is_empty():
+            # Fall back to internal clipboard (e.g. cut from same session)
+            src_paths = [p for p in self._clipboard.paths if p.exists()]
+            op = "copy" if self._clipboard.operation == "copy" else "move"
+        else:
             return
-        op = "copy" if self._clipboard.operation == "copy" else "move"
-        src_paths = [p for p in self._clipboard.paths if p.exists()]
+
         if not src_paths:
             return
+
         dst_dir = self._current_path
         conflicts = FileOpsBackend().find_conflicts(src_paths, dst_dir)
         conflict_strategy = ConflictStrategy.RENAME
@@ -778,9 +803,10 @@ class FileManagerView(QWidget):
         desc = strings.FM_OP_COPYING if op == "copy" else strings.FM_OP_MOVING
         self._start_file_op(op, src_paths, dst_dir=dst_dir,
                             conflict=conflict_strategy, desc=desc)
-        if self._clipboard.operation == "cut":
+        if op == "move":
+            # Clear system clipboard so other apps know the cut is consumed
+            QApplication.clipboard().clear()
             self._clipboard = None
-            self._left_view.set_paste_enabled(False)
 
     def _ask_conflict_strategy(self, conflicts: list[str]) -> str | None:
         dlg = QMessageBox(self)
@@ -850,6 +876,7 @@ class FileManagerView(QWidget):
             }.get(op, op)
 
         self._action_panel.start_action(desc)
+        self._last_op_target_dir = dst_dir or self._current_path
 
         if self._ops_thread and self._ops_thread.isRunning():
             self._ops_thread.quit()
@@ -893,15 +920,13 @@ class FileManagerView(QWidget):
 
     def _on_ops_succeeded(self, message: str) -> None:
         self._action_panel.mark_complete(message)
-        self._refresh_left()
-        self._refresh_right()
+        self._refresh_panes_for_dir(self._last_op_target_dir)
         self._sidebar.refresh_expanded_nodes()
         self._sidebar.update_wastebin_icon()
 
     def _on_ops_failed(self, message: str) -> None:
         self._action_panel.mark_failed(message)
-        self._refresh_left()
-        self._refresh_right()
+        self._refresh_panes_for_dir(self._last_op_target_dir)
 
     def _refresh_left(self) -> None:
         if self._left_view._shown:
@@ -910,6 +935,43 @@ class FileManagerView(QWidget):
     def _refresh_right(self) -> None:
         if self._right_view._shown:
             self._right_view._load()
+
+    def _refresh_panes_for_dir(self, target_dir: Path | None) -> None:
+        """Reload any pane whose current directory equals target_dir.
+
+        Falls back to refreshing both panes when target_dir is unknown.
+        """
+        if target_dir is None:
+            self._refresh_left()
+            self._refresh_right()
+            return
+        if self._left_view._shown and self._left_view.current_path == target_dir:
+            self._left_view._load()
+        if self._right_view._shown and self._right_view.current_path == target_dir:
+            self._right_view._load()
+
+    def _set_system_clipboard(self, op: str, paths: list[Path]) -> None:
+        """Write file paths to the system clipboard with KDE and GNOME cut markers."""
+        urls = [QUrl.fromLocalFile(str(p)) for p in paths]
+        url_bytes = "\n".join(u.toString() for u in urls).encode()
+        mime = QMimeData()
+        mime.setUrls(urls)
+        mime.setText("\n".join(str(p) for p in paths))
+        if op == "cut":
+            mime.setData("application/x-kde-cutselection", b"1")
+            mime.setData("x-special/gnome-copied-files", b"cut\n" + url_bytes)
+        else:
+            mime.setData("x-special/gnome-copied-files", b"copy\n" + url_bytes)
+        QApplication.clipboard().setMimeData(mime)
+
+    def _on_clipboard_changed(self) -> None:
+        """Enable/disable Paste based on whether the system clipboard has file URLs."""
+        mime = QApplication.clipboard().mimeData()
+        has_files = mime is not None and mime.hasUrls()
+        has_internal = self._clipboard is not None and not self._clipboard.is_empty()
+        enabled = has_files or has_internal
+        self._left_view.set_paste_enabled(enabled)
+        self._right_view.set_paste_enabled(enabled)
 
     def _load_file_tags(self) -> None:
         """Bulk-load tags for the current directory entries and push to the left view."""
@@ -1115,10 +1177,15 @@ class FileManagerView(QWidget):
         self._action_panel.mark_complete(message)
         if self._in_trash_mode:
             self._load_trash()
+        self._refresh_left()
+        self._refresh_right()
+        self._sidebar.refresh_expanded_nodes()
         self._sidebar.update_wastebin_icon()
 
     def _on_trash_failed(self, message: str) -> None:
         self._action_panel.mark_failed(message)
         if self._in_trash_mode:
             self._load_trash()
+        self._refresh_left()
+        self._refresh_right()
         self._sidebar.update_wastebin_icon()

@@ -1209,6 +1209,63 @@ mounted drives use `"drive-harddisk"`.
 `TRASH_OP_RESTORING/EMPTYING/DELETING`.
 
 ### Tests: 594/594 (+9 new in `tests/test_m10d1_trash.py`)
+
+## M10d.1 Follow-up 2: System clipboard + listing refresh + tag auto-show
+
+### Part 1 — System clipboard interop (`views/file_manager_view.py`)
+
+**`_set_system_clipboard(op, paths)`** (new helper):
+- Builds a `QMimeData` object with three MIME types and sets it on `QApplication.clipboard()`:
+  - `text/uri-list` → `QUrl.fromLocalFile` URLs of the selected paths.
+  - `text/plain` → newline-joined POSIX paths.
+  - `x-special/gnome-copied-files` → `b"copy\n"` or `b"cut\n"` prefix + newline-joined file:// URLs (GNOME/Nautilus convention).
+  - `application/x-kde-cutselection` → `b"1"` (KDE/Dolphin convention, cut only).
+- `QMimeData` and `QUrl` added to `PyQt6.QtCore` imports.
+
+**`_do_paste()`** rewritten to read from the system clipboard:
+1. `QApplication.clipboard().mimeData()` → if has file URLs, decode them:
+   - Check `application/x-kde-cutselection == "1"` → move.
+   - OR check `x-special/gnome-copied-files` starts with `"cut\n"` → move.
+   - Otherwise → copy.
+2. Falls back to internal `_clipboard` if system clipboard has no file URLs.
+3. After a move-paste, calls `QApplication.clipboard().clear()` to signal the cut is consumed.
+4. Internal `_clipboard` is cleared (`= None`) on move-paste.
+
+**`_on_clipboard_changed()`** (new slot): connected to `QApplication.clipboard().dataChanged`
+in `__init__`. Reads system clipboard `hasUrls()` or internal `_clipboard` to set paste-enabled
+state on both left and right `FileView`s. Copy/cut action no longer manually calls
+`set_paste_enabled(True)` — that's driven by the `dataChanged` signal.
+
+**`FmClipboard`** kept as thin tracker for cut-visual state (dimmed icons, if ever added). 
+Source of truth for paste is now the system clipboard.
+
+### Part 2 — Targeted listing refresh (`views/file_manager_view.py`)
+
+**`_last_op_target_dir: Path | None`** (new instance variable): set in `_start_file_op` to
+`dst_dir or self._current_path` so completion handlers know which directory changed.
+
+**`_refresh_panes_for_dir(target_dir: Path | None)`** (new helper):
+- Reloads left pane if `_shown` and `current_path == target_dir`.
+- Reloads right pane if `_shown` and `current_path == target_dir`.
+- Falls back to refreshing both panes when `target_dir is None`.
+
+**`_on_ops_succeeded`** / **`_on_ops_failed`**: replaced `_refresh_left()` + `_refresh_right()`
+with `_refresh_panes_for_dir(self._last_op_target_dir)`. Only the pane currently showing
+the operation's target directory reloads; unaffected panes are left alone.
+
+**`_on_trash_succeeded`** / **`_on_trash_failed`** (bug fix): added `_refresh_left()`,
+`_refresh_right()`, and `_sidebar.refresh_expanded_nodes()`. Previously these never called any
+pane refresh, so restored files didn't appear until re-navigation.
+
+### Part 3 — FM tag auto-show (already working)
+M10e was completed in the session immediately before this follow-up. The `FileTagModal.saved`
+signal already connects to `_load_file_tags()` → `_left_view.set_tag_map()` → `dataChanged`
+repaint. No additional work needed; tags appear immediately after the modal closes.
+
+### Tests: 633/633 (+20 new in `tests/test_m10d1_followup2.py`)
+Clipboard (6): copy writes URI list; copy writes plain text; copy sets GNOME copy marker; cut sets KDE marker; cut sets GNOME cut marker; cut URL appears in GNOME marker.
+Paste (6): plain URLs → copy; KDE cut marker → move; GNOME cut prefix → move; GNOME copy prefix → copy; falls back to internal clipboard; empty clipboard is no-op.
+Refresh (8): targeted left reload; both panes reload if both match; non-matching skipped; None fallback reloads both; ops_succeeded uses targeted; ops_failed uses targeted; trash_succeeded refreshes left; trash_succeeded refreshes right.
 1. `test_list_trash_parses_trashinfo` — parses name, original_path, deletion_date, size
 2. `test_restore_moves_file_and_removes_trashinfo` — file moves to original location, .trashinfo deleted
 3. `test_empty_trash_clears_both_dirs` — files/ and info/ both empty after empty_trash()
