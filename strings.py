@@ -577,3 +577,7 @@ FT_CREATE_HEADER     = "CREATE TAG"
 FT_ASSIGN_HEADER     = "ASSIGN TAGS"
 FT_SAVE_BTN          = "Save"
 FT_CANCEL_BTN        = "Cancel"
+
+# ── Default file manager registration ─────────────────────────────────────────
+ACTION_SET_DEFAULT_FM      = "Set as default file manager"
+NOTICE_SET_DEFAULT_FM_DONE = "eKplorer is now your default file manager."

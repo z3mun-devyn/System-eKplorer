@@ -1439,3 +1439,59 @@ Called at startup before the database opens. If `~/.local/share/ekploiter/` exis
 **DB path** (`models/database.py`): `DB_PATH = Path.home() / ".local" / "share" / "ekplorer" / "data.db"`
 
 Tests: 665/665 (no new tests; no test assertions checked the old name string).
+
+## Single instance + default file manager registration
+
+### Part A — Single instance (`main.py`)
+
+**Socket name:** `f"ekplorer-{os.getuid()}"` — per-user, no collision with other users.
+
+**Startup flow:**
+1. `_generate_desktop_file()` runs (Part C) before `QApplication` is created.
+2. `QApplication` is created so `QLocalSocket` is usable.
+3. `_try_become_secondary(socket_name, path_arg)` tries `QLocalSocket.connectToServer(name)` + `waitForConnected(500ms)`.
+   - Connected → send `path_arg + "\n"` as UTF-8, close socket, `sys.exit(0)`.
+   - Not connected → we are the primary instance, continue.
+4. `MainWindow.start_server(socket_name)` calls `QLocalServer.removeServer()` (clears stale socket) then `QLocalServer.listen()`.
+5. `newConnection → _on_new_instance_connection()`: reads the path from the socket, calls `raise_()` + `activateWindow()`, navigates to the path if it's a directory.
+
+**`_local_server`** is stored on `MainWindow` as `QLocalServer | None` (parented to the window, cleaned up on close).
+
+### Part B — CLI argument handling (`main.py`)
+
+`_normalize_path_arg(arg)`: strips `"file://"` prefix then `urllib.parse.unquote()`. Pure function, no Qt.
+
+After `window.show()`, if `path_arg` is non-empty:
+- `Path(path_arg).is_dir()` → `navigate_to_directory(path_arg)` (switch to FM tab)
+- `Path(path_arg).is_file()` → `navigate_to_directory(str(p.parent))` (navigate to parent, file not selected — no FM selection API yet)
+
+Normal launch (no args) → Dashboard as before.
+
+### Part C — Desktop file generation (`main.py`)
+
+`_generate_desktop_file(desktop_dir=None)`:
+- `desktop_dir` defaults to `~/.local/share/applications/`; overridable for tests.
+- Builds Exec line: `f"Exec={sys.executable} {Path(__file__).resolve()} %U"` — always correct for the active venv.
+- If `ekplorer.desktop` exists and its `Exec=` line matches → skip (no-op, no filesystem write).
+- Otherwise writes the file, then calls `subprocess.run(["update-desktop-database", ...], check=False)` (silently ignored if not installed).
+- Called at startup before QApplication so it's always current before the single-instance check fires.
+
+### Part D — "Set as default file manager" button (`views/dashboard_view.py`)
+
+`_XDG_MIME = shutil.which("xdg-mime")` at module level — None if tool absent.
+
+`_check_default_fm()` (called in `__init__`):
+- Runs `xdg-mime query default inode/directory`; if output == `"ekplorer.desktop"`, hides `_default_fm_bar` immediately.
+- Wrapped in `try/except` — safe if xdg-mime absent.
+
+`_set_as_default_fm()` (button click):
+- `xdg-mime default ekplorer.desktop inode/directory`
+- `xdg-mime default ekplorer.desktop x-scheme-handler/file`
+- Hides `_default_fm_bar`, shows toast `strings.NOTICE_SET_DEFAULT_FM_DONE`.
+
+Layout: `_default_fm_bar` (QWidget with QHBoxLayout) sits between the scroll area and the toast bar in the outer QVBoxLayout — always visible without scrolling.
+
+### Tests: 686/686 (+21 in `tests/test_single_instance.py`)
+normalize_path_arg (6): strips file:// scheme; URL-decodes spaces; plain path unchanged; decodes without scheme; empty string; encoded slash.
+_try_become_secondary (6): returns True when connected; sends path as UTF-8 line; sends empty string + newline; returns False when no server; closes socket on success; does not write when not connected.
+_generate_desktop_file (9): exec contains sys.executable; exec contains main.py path; full exec line format; creates file when missing; not rewritten when exec unchanged (mtime stable); rewritten when exec changed; mime types present; StartupWMClass correct; creates nested directories.

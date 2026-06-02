@@ -1,10 +1,13 @@
 """System eKplorer — entry point."""
 
 import os
+import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 from PyQt6.QtGui import QIcon
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -23,6 +26,14 @@ from views.file_view import _chrome_icon
 from views.navigation_sidebar import NavigationSidebar
 from views.packages_view import PackagesView
 from views.terminal_view import TerminalView
+
+
+# ── Single-instance socket name ───────────────────────────────────────────────
+_SOCKET_NAME = f"ekplorer-{os.getuid()}"
+
+# ── Desktop file paths ────────────────────────────────────────────────────────
+_DESKTOP_DIR = Path.home() / ".local" / "share" / "applications"
+_DESKTOP_FILE = _DESKTOP_DIR / "ekplorer.desktop"
 
 
 class DashboardTab(QWidget):
@@ -77,6 +88,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(strings.APP_TITLE)
         self.resize(1100, 700)
 
+        self._local_server: QLocalServer | None = None
+
         self._tabs = QTabWidget()
         self._dashboard_tab = DashboardTab()
         self._file_manager_tab = FileManagerTab()
@@ -115,6 +128,32 @@ class MainWindow(QMainWindow):
             self.navigate_to_directory
         )
 
+    # ── Single-instance server ────────────────────────────────────────────────
+
+    def start_server(self, socket_name: str) -> None:
+        QLocalServer.removeServer(socket_name)
+        self._local_server = QLocalServer(self)
+        self._local_server.newConnection.connect(self._on_new_instance_connection)
+        self._local_server.listen(socket_name)
+
+    def _on_new_instance_connection(self) -> None:
+        if self._local_server is None:
+            return
+        conn = self._local_server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.waitForReadyRead(500)
+        raw = bytes(conn.readAll()).decode("utf-8").strip()
+        conn.close()
+        self.raise_()
+        self.activateWindow()
+        if raw:
+            p = Path(raw)
+            if p.is_dir():
+                self.navigate_to_directory(raw)
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+
     def navigate_to_directory(self, path: str) -> None:
         if self._tabs.currentIndex() == self._terminal_index:
             self._terminal_tab.terminal_view.navigate_to(path)
@@ -123,6 +162,8 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentIndex(self._fm_index)
         self._file_manager_tab.file_manager_view.navigate_to(path)
 
+
+# ── App paths & migration ─────────────────────────────────────────────────────
 
 _ICON_PATH = Path(__file__).parent / "assets" / "icons" / "ekplorer.png"
 
@@ -142,19 +183,112 @@ def _migrate_data_dir() -> None:
         print("Migrated data directory to ~/.local/share/ekplorer/", file=sys.stderr)
 
 
+# ── Desktop file generation ───────────────────────────────────────────────────
+
+def _generate_desktop_file(desktop_dir: Path | None = None) -> None:
+    """Write ~/.local/share/applications/ekplorer.desktop if missing or stale.
+
+    Regenerates whenever the Exec line changes (e.g. venv moved), so the
+    entry always points at the live Python interpreter and main.py.
+    """
+    dest = desktop_dir or _DESKTOP_DIR
+    desktop_file = dest / "ekplorer.desktop"
+    main_py = str(Path(__file__).resolve())
+    exec_line = f"Exec={sys.executable} {main_py} %U"
+
+    content = "\n".join([
+        "[Desktop Entry]",
+        "Version=1.0",
+        "Type=Application",
+        "Name=System eKplorer",
+        "Comment=File manager, package manager and terminal in one",
+        exec_line,
+        "Icon=system-file-manager",
+        "Terminal=false",
+        "Categories=System;FileManager;",
+        "MimeType=inode/directory;x-scheme-handler/file;",
+        "StartupNotify=true",
+        "StartupWMClass=ekplorer",
+        "",
+    ])
+
+    dest.mkdir(parents=True, exist_ok=True)
+
+    if desktop_file.exists():
+        for line in desktop_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Exec="):
+                if line == exec_line:
+                    return  # Exec unchanged — skip write
+                break
+
+    desktop_file.write_text(content, encoding="utf-8")
+    subprocess.run(
+        ["update-desktop-database", str(dest)],
+        check=False,
+        capture_output=True,
+        timeout=5,
+    )
+
+
+# ── Single-instance helpers ───────────────────────────────────────────────────
+
+def _normalize_path_arg(arg: str) -> str:
+    """Strip file:// scheme and URL-decode a CLI path argument."""
+    if arg.startswith("file://"):
+        arg = arg[len("file://"):]
+    return urllib.parse.unquote(arg)
+
+
+def _try_become_secondary(socket_name: str, path_arg: str) -> bool:
+    """Return True and forward *path_arg* to the running instance, or False."""
+    sock = QLocalSocket()
+    sock.connectToServer(socket_name)
+    if sock.waitForConnected(500):
+        sock.write((path_arg + "\n").encode("utf-8"))
+        sock.flush()
+        sock.waitForBytesWritten(500)
+        sock.close()
+        return True
+    return False
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 def main() -> None:
     _migrate_data_dir()
+    _generate_desktop_file()
 
     # Let the KDE platform plugin load on Plasma 6; silently ignored elsewhere.
     os.environ.setdefault("QT_QPA_PLATFORMTHEME", "kde")
 
+    # Parse CLI path argument before QApplication so we can forward it to a
+    # running instance immediately after the app object is created.
+    path_arg = ""
+    if len(sys.argv) > 1:
+        path_arg = _normalize_path_arg(sys.argv[1])
+
     app = QApplication(sys.argv)
     app.setApplicationName(strings.APP_TITLE)
+
+    # Single-instance guard: if another eKplorer is running, hand off and exit.
+    if _try_become_secondary(_SOCKET_NAME, path_arg):
+        sys.exit(0)
+
     if _ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(_ICON_PATH)))
     # Inherit Plasma's active color scheme — no palette override (spec §3)
     window = MainWindow()
+    window.start_server(_SOCKET_NAME)
     window.show()
+
+    # Navigate to initial path if one was supplied on the command line.
+    if path_arg:
+        p = Path(path_arg)
+        if p.is_dir():
+            window.navigate_to_directory(path_arg)
+        elif p.is_file():
+            window.navigate_to_directory(str(p.parent))
+
     sys.exit(app.exec())
 
 

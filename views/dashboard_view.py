@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+_XDG_MIME = shutil.which("xdg-mime")
+
 _PIE_SIZE = 80
 _PEN_WIDTH = 12
 _PIE_MARGIN = _PEN_WIDTH // 2 + 2
@@ -566,6 +568,18 @@ class DashboardView(QWidget):
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         outer.addWidget(self._scroll, stretch=1)
 
+        # "Set as default file manager" footer — hidden once already default
+        self._default_fm_bar = QWidget()
+        _dfm_layout = QHBoxLayout(self._default_fm_bar)
+        _dfm_layout.setContentsMargins(16, 4, 16, 4)
+        self._default_fm_btn = QPushButton(strings.ACTION_SET_DEFAULT_FM)
+        self._default_fm_btn.setMaximumWidth(260)
+        self._default_fm_btn.clicked.connect(self._set_as_default_fm)
+        _dfm_layout.addWidget(self._default_fm_btn)
+        _dfm_layout.addStretch()
+        outer.addWidget(self._default_fm_bar)
+        self._check_default_fm()
+
         # Toast bar at the very bottom of the view
         self._toast = QLabel()
         self._toast.setVisible(False)
@@ -808,3 +822,35 @@ class DashboardView(QWidget):
         self._toast.setText(message)
         self._toast.setVisible(True)
         QTimer.singleShot(5000, self._toast.hide)
+
+    # ── Default file manager ──────────────────────────────────────────────────
+
+    def _check_default_fm(self) -> None:
+        """Hide the button if ekplorer is already the default file manager."""
+        if _XDG_MIME is None:
+            return
+        try:
+            result = subprocess.run(
+                [_XDG_MIME, "query", "default", "inode/directory"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "ekplorer.desktop":
+                self._default_fm_bar.setVisible(False)
+        except Exception:
+            pass
+
+    def _set_as_default_fm(self) -> None:
+        if _XDG_MIME is not None:
+            try:
+                subprocess.run(
+                    [_XDG_MIME, "default", "ekplorer.desktop", "inode/directory"],
+                    check=False, capture_output=True, timeout=5,
+                )
+                subprocess.run(
+                    [_XDG_MIME, "default", "ekplorer.desktop", "x-scheme-handler/file"],
+                    check=False, capture_output=True, timeout=5,
+                )
+            except Exception:
+                pass
+        self._default_fm_bar.setVisible(False)
+        self._show_toast(strings.NOTICE_SET_DEFAULT_FM_DONE)
