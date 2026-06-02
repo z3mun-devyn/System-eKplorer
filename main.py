@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QMainWindow,
+    QPushButton,
     QStatusBar,
     QStyle,
     QTabWidget,
@@ -20,7 +21,9 @@ from PyQt6.QtWidgets import (
 )
 
 import strings
+from backends.settings_backend import SettingsRepository
 from views.clipboard_view import ClipboardView
+from views.configure_dialog import ConfigureDialog
 from views.dashboard_view import DashboardView
 from views.file_manager_view import FileManagerView
 from views.file_view import _chrome_icon
@@ -31,6 +34,21 @@ from views.terminal_view import TerminalView
 
 # ── Single-instance socket name ───────────────────────────────────────────────
 _SOCKET_NAME = f"ekplorer-{os.getuid()}"
+
+# ── Startup tab mapping ───────────────────────────────────────────────────────
+_STARTUP_TAB_MAP: dict[str, int] = {
+    "dashboard":    0,
+    "file_manager": 1,
+    "packages":     2,
+    "terminal":     3,
+    "clipboard":    4,
+}
+
+
+def _startup_tab_index(settings: SettingsRepository) -> int:
+    """Map the app.startup_tab setting to a tab index (default 0 = Dashboard)."""
+    key = settings.get("app.startup_tab") or "dashboard"
+    return _STARTUP_TAB_MAP.get(key, 0)
 
 # ── Desktop file paths ────────────────────────────────────────────────────────
 _DESKTOP_DIR = Path.home() / ".local" / "share" / "applications"
@@ -125,7 +143,22 @@ class MainWindow(QMainWindow):
             strings.TAB_CLIPBOARD,
         )
 
-        self._tabs.setCurrentIndex(0)  # Dashboard selected by default (spec §7)
+        # Startup tab from settings (defaults to Dashboard)
+        self._tabs.setCurrentIndex(_startup_tab_index(SettingsRepository()))
+
+        # Gear button in the top-right corner of the tab bar
+        gear_btn = QPushButton()
+        gear_btn.setIcon(
+            _chrome_icon(
+                "configure",
+                QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            )
+        )
+        gear_btn.setToolTip(strings.CONFIGURE_TOOLTIP)
+        gear_btn.setFlat(True)
+        gear_btn.setFixedSize(28, 28)
+        gear_btn.clicked.connect(self._open_configure)
+        self._tabs.setCornerWidget(gear_btn)
 
         self.setCentralWidget(self._tabs)
 
@@ -143,6 +176,12 @@ class MainWindow(QMainWindow):
         self._dashboard_tab.dashboard_view.navigate_requested.connect(
             self.navigate_to_directory
         )
+
+    # ── Configure dialog ──────────────────────────────────────────────────────
+
+    def _open_configure(self) -> None:
+        dlg = ConfigureDialog(parent=self)
+        dlg.exec()
 
     # ── Single-instance server ────────────────────────────────────────────────
 

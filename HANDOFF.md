@@ -1527,3 +1527,26 @@ clear_unpinned (3): removes all unpinned; leaves pinned intact; multiple pinned 
 max_entries setting (3): default 10; persists across instances; minimum clamped to 1.
 list ordering (1): pinned appear before unpinned.
 enforce_limit (2): trims to new max; preserves pinned.
+
+## Configure dialog (centralised settings)
+
+**Entry point:** `QPushButton` in the top-right corner of the tab bar via `QTabWidget.setCornerWidget()`. Icon: `_chrome_icon("configure", SP_FileDialogDetailedView)`. Tooltip: `strings.CONFIGURE_TOOLTIP`. Opens `ConfigureDialog(parent=self)` via `MainWindow._open_configure()`.
+
+**Startup tab:** `_STARTUP_TAB_MAP` dict and `_startup_tab_index(repo)` function in `main.py`. Setting key: `app.startup_tab` (values: "dashboard", "file_manager", "packages", "terminal", "clipboard"). `MainWindow.__init__` calls `_startup_tab_index(SettingsRepository())` to select the initial tab instead of hardcoded 0.
+
+**`ConfigureDialog`** (`views/configure_dialog.py`): fixed size 680×460. Left `QListWidget` (160px) + right `QStackedWidget`. Category switch via `currentRowChanged → setCurrentIndex`. OK calls `_on_ok()` → writes all settings → `accept()`. Cancel → `reject()` with no writes.
+
+**5 pages:**
+- **General**: startup tab `QComboBox` → `app.startup_tab`.
+- **File Manager**: view mode combo (details/icons) → `fm.view_mode`; show hidden checkbox → `fm.show_hidden`; address bar mode combo (path/breadcrumb) → `fm.address_bar.mode`.
+- **Clipboard**: max entries spinbox 1–100 → `clipboard.max_entries` (tooltip explains pinned immunity); Clear history button calls `ClipboardBackend.clear_unpinned()` after `QMessageBox.question` confirmation. Button disabled (with tooltip) if backend absent.
+- **System**: `_query_default_fm()` method calls xdg-mime — mockable separately from subprocess. Status label + Set as Default button (disabled when already default). `_refresh_default_fm_status()` updates both after click.
+- **About**: app title (bold, +4pt), version, license link (`openExternalLinks=True`), repo URL (hidden when `strings.APP_REPO_URL` is empty).
+
+**`strings.py` additions:** `APP_REPO_URL = ""`, all `CONFIGURE_*` strings.
+
+### Tests: 734/734 (+26 in `tests/test_configure_dialog.py`)
+_startup_tab_index (7): all 5 tabs map correctly; unknown key defaults to 0; _STARTUP_TAB_KEYS covers all map entries.
+Dialog reads settings (7): startup tab combo; fm show_hidden checkbox true/false; fm view mode icons; fm address bar breadcrumb; clipboard max entries; default 10 when missing.
+OK writes / Cancel does not (7): startup tab; fm view mode; fm show_hidden; fm address bar; clipboard max entries; cancel doesn't write fm view; cancel doesn't write startup tab.
+System page (5): label "is default"; label "not default"; set btn disabled when default; set btn enabled when not; not default when query returns None.

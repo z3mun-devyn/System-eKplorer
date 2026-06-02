@@ -2,8 +2,9 @@
 # All user-facing strings live here so Linux idioms can be revised globally.
 # Also home to shared color utilities used across views.
 
-APP_TITLE = "System eKplorer"
-APP_VERSION = "0.1-alpha"
+APP_TITLE    = "System eKplorer"
+APP_VERSION  = "0.1-alpha"
+APP_REPO_URL = ""  # Set when repository is public
 
 # Tab bar
 TAB_DASHBOARD = "Dashboard"
@@ -581,6 +582,29 @@ FT_CANCEL_BTN        = "Cancel"
 # ── Default file manager registration ─────────────────────────────────────────
 ACTION_SET_DEFAULT_FM      = "Set as default file manager"
 NOTICE_SET_DEFAULT_FM_DONE = "eKplorer is now your default file manager."
+
+# ── Configure dialog ──────────────────────────────────────────────────────────
+CONFIGURE_TOOLTIP           = "Configure eKplorer"
+CONFIGURE_TITLE             = "Configure eKplorer"
+CONFIGURE_CAT_GENERAL       = "General"
+CONFIGURE_CAT_FILE_MANAGER  = "File Manager"
+CONFIGURE_CAT_CLIPBOARD     = "Clipboard"
+CONFIGURE_CAT_SYSTEM        = "System"
+CONFIGURE_CAT_ABOUT         = "About"
+CONFIGURE_STARTUP_TAB       = "Startup tab:"
+CONFIGURE_FM_DEFAULT_VIEW   = "Default view:"
+CONFIGURE_FM_SHOW_HIDDEN    = "Show hidden files by default"
+CONFIGURE_FM_ADDRESS_BAR    = "Address bar mode:"
+CONFIGURE_CB_MAX_ENTRIES    = "Max entries:"
+CONFIGURE_CB_MAX_TOOLTIP    = "Pinned entries are never removed regardless of this limit."
+CONFIGURE_CB_CLEAR_ALL      = "Clear clipboard history"
+CONFIGURE_CB_CLEAR_TITLE    = "Clear Clipboard History?"
+CONFIGURE_CB_CLEAR_MSG      = "This will remove all unpinned clipboard history entries. Pinned entries are kept."
+CONFIGURE_SYS_FM_STATUS_IS  = "eKplorer is your default file manager."
+CONFIGURE_SYS_FM_STATUS_NOT = "eKplorer is not your default file manager."
+CONFIGURE_SYS_FM_SET_BTN    = "Set as Default"
+CONFIGURE_ABOUT_LICENSE     = "GNU General Public License v3"
+CONFIGURE_ABOUT_REPO        = "Source:"
 
 # ── Clipboard tab ─────────────────────────────────────────────────────────────
 TAB_CLIPBOARD              = "Clipboard"
