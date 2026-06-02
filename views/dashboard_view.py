@@ -237,6 +237,8 @@ class LabelModal(QDialog):
 
 
 class DriveTile(QFrame):
+    navigate_requested = pyqtSignal(str)
+
     def __init__(self, drive: Drive, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._drive = drive
@@ -296,6 +298,11 @@ class DriveTile(QFrame):
         layout.addLayout(pie_row)
 
         self._refresh_badge()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.navigate_requested.emit(self._drive.mount_point)
+        super().mousePressEvent(event)
 
     def paintEvent(self, event) -> None:
         _paint_card(self, self._hovered)
@@ -540,6 +547,8 @@ _POLL_INTERVAL_MS = 15_000
 class DashboardView(QWidget):
     """Files-tab landing page: responsive grid of drive tiles."""
 
+    navigate_requested = pyqtSignal(str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._tiles: list[DriveTile] = []
@@ -704,12 +713,17 @@ class DashboardView(QWidget):
         else:
             self._apply_diff(mounted, unmounted)
 
+    def _new_drive_tile(self, drive: Drive) -> DriveTile:
+        tile = DriveTile(drive)
+        tile.navigate_requested.connect(self.navigate_requested)
+        return tile
+
     def _build_initial(self, mounted: list, unmounted: list) -> None:
         if not mounted:
             self._status_label.setText("No drives found.")
         else:
             self._status_label.setVisible(False)
-            self._tiles = [DriveTile(drive) for drive in mounted]
+            self._tiles = [self._new_drive_tile(drive) for drive in mounted]
             self._grid_widget.setVisible(True)
 
         if unmounted:
@@ -751,7 +765,7 @@ class DashboardView(QWidget):
                 tile._drive = drive
                 tile._refresh_badge()
             else:
-                tile = DriveTile(drive)
+                tile = self._new_drive_tile(drive)
             new_tiles.append(tile)
         for tile in current_active.values():
             tile.setParent(None)

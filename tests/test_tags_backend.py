@@ -34,7 +34,7 @@ def test_fresh_db_user_version(tmp_path):
     db = tmp_path / "data.db"
     with open_db(db) as conn:
         uv = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert uv == CURRENT_VERSION == 2
+    assert uv == CURRENT_VERSION
 
 
 def test_fresh_db_has_drive_labels(tmp_path):
@@ -86,12 +86,12 @@ def test_fresh_db_tags_uses_name_as_pk(tmp_path):
 
 # ── Starting state 2: v1 DB from M2 ──────────────────────────────────────────
 
-def test_v1_migrates_user_version_to_2(tmp_path):
+def test_v1_migrates_user_version_to_current(tmp_path):
     db = tmp_path / "data.db"
     _make_v1_db(db)
     with open_db(db) as conn:
         uv = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert uv == 2
+    assert uv == CURRENT_VERSION
 
 
 def test_v1_drive_label_survives_migration(tmp_path):
@@ -137,13 +137,13 @@ def test_v1_legacy_schema_version_table_preserved(tmp_path):
 
 # ── Starting state 3: v2 DB re-open is a no-op ───────────────────────────────
 
-def test_v2_reopen_does_not_change_user_version(tmp_path):
+def test_v3_reopen_does_not_change_user_version(tmp_path):
     db = tmp_path / "data.db"
     with open_db(db):
         pass
     with open_db(db) as conn:
         uv = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert uv == 2
+    assert uv == CURRENT_VERSION
 
 
 def test_v2_reopen_does_not_lose_data(tmp_path):
@@ -290,3 +290,55 @@ def test_deleting_tag_cascades_to_package_tags(tmp_path):
             "SELECT * FROM package_tags WHERE tag_name = 'Temp'"
         ).fetchall()
     assert rows == []
+
+
+# ── TagRepository: delete_tag ─────────────────────────────────────────────────
+
+def test_delete_tag_removes_from_all_tags(tmp_path):
+    repo = TagRepository(tmp_path / "data.db")
+    repo.create_tag("Work", "#3498db")
+    repo.delete_tag("Work")
+    assert repo.all_tags() == []
+
+
+def test_delete_tag_cascades_package_tags(tmp_path):
+    repo = TagRepository(tmp_path / "data.db")
+    repo.create_tag("Work", "#3498db")
+    repo.set_assignments("apt", "vim", {"Work"})
+    repo.delete_tag("Work")
+    assert repo.tags_for_package("apt", "vim") == []
+
+
+def test_delete_tag_leaves_other_tags_intact(tmp_path):
+    repo = TagRepository(tmp_path / "data.db")
+    repo.create_tag("Keep", "#2ecc71")
+    repo.create_tag("Remove", "#e74c3c")
+    repo.delete_tag("Remove")
+    names = [t.name for t in repo.all_tags()]
+    assert names == ["Keep"]
+
+
+def test_delete_tag_leaves_other_assignments_intact(tmp_path):
+    repo = TagRepository(tmp_path / "data.db")
+    repo.create_tag("Keep", "#2ecc71")
+    repo.create_tag("Remove", "#e74c3c")
+    repo.set_assignments("apt", "vim", {"Keep", "Remove"})
+    repo.delete_tag("Remove")
+    tags = repo.tags_for_package("apt", "vim")
+    assert [t.name for t in tags] == ["Keep"]
+
+
+# ── TagRepository: assigned_count ────────────────────────────────────────────
+
+def test_assigned_count_zero_when_no_assignments(tmp_path):
+    repo = TagRepository(tmp_path / "data.db")
+    repo.create_tag("Unused", "#e74c3c")
+    assert repo.assigned_count("Unused") == 0
+
+
+def test_assigned_count_correct(tmp_path):
+    repo = TagRepository(tmp_path / "data.db")
+    repo.create_tag("Work", "#3498db")
+    repo.set_assignments("apt", "vim",  {"Work"})
+    repo.set_assignments("apt", "bash", {"Work"})
+    assert repo.assigned_count("Work") == 2

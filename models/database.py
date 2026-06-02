@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path.home() / ".local" / "share" / "ekploiter" / "data.db"
+DB_PATH = Path.home() / ".local" / "share" / "ekplorer" / "data.db"
 
 CURRENT_VERSION = 5
 

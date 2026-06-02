@@ -2,7 +2,7 @@
 # All user-facing strings live here so Linux idioms can be revised globally.
 # Also home to shared color utilities used across views.
 
-APP_TITLE = "System eKploiter"
+APP_TITLE = "System eKplorer"
 APP_VERSION = "0.1-alpha"
 
 # Tab bar
@@ -11,7 +11,7 @@ TAB_FILE_MANAGER = "File Manager"
 TAB_FILE_MANAGER_TOOLTIP = "Coming soon"
 TAB_PACKAGES = "Packages"
 
-# §4 terminology translations: Linux term → eKploiter UI
+# §4 terminology translations: Linux term → eKplorer UI
 TERM_PACKAGE = "App"                           # "Package" sounds like cardboard box
 TERM_PACKAGES_PLURAL = "Apps"
 TERM_REPOSITORY = "Source"                     # Plain English

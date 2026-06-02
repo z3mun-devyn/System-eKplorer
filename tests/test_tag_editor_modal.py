@@ -111,3 +111,73 @@ def test_hide_show_preserves_pill_toggle_state(modal, qtbot):
     widget.setVisible(False)
     widget.setVisible(True)
     assert widget._pills[0].is_assigned() == toggled_state
+
+
+# ── 4. Batch modal ────────────────────────────────────────────────────────────
+
+def test_open_for_batch_sets_title(modal):
+    widget, db = modal
+    pkgs = [
+        Package("vim", "2:8.2", 3584, "editors"),
+        Package("nano", "6.0", 512, "editors"),
+    ]
+    entries = [PackageEntry(package=p) for p in pkgs]
+    widget.open_for_batch(entries)
+    assert "2" in widget._title_label.text()
+
+
+def test_open_for_batch_tag_assigned_only_if_all_have_it(modal):
+    widget, db = modal
+    repo = TagRepository(db)
+    repo.create_tag("Work", strings.TAG_PALETTE[0])
+    repo.create_tag("Gaming", strings.TAG_PALETTE[1])
+
+    pkg1 = Package("vim", "2:8.2", 3584, "editors")
+    pkg2 = Package("nano", "6.0", 512, "editors")
+
+    tag_work = repo.all_tags()[0] if repo.all_tags()[0].name == "Work" else repo.all_tags()[1]
+    tag_gaming = repo.all_tags()[0] if repo.all_tags()[0].name == "Gaming" else repo.all_tags()[1]
+    # Rebuild with consistent references
+    all_tags = {t.name: t for t in repo.all_tags()}
+
+    # pkg1 has both tags; pkg2 only has Work
+    repo.set_assignments("apt", "vim", {"Work", "Gaming"})
+    repo.set_assignments("apt", "nano", {"Work"})
+
+    assignments = repo.load_all_assignments()
+    entry1 = PackageEntry(package=pkg1, tags=assignments.get(("apt", "vim"), []))
+    entry2 = PackageEntry(package=pkg2, tags=assignments.get(("apt", "nano"), []))
+
+    widget.open_for_batch([entry1, entry2])
+
+    pill_states = {p.tag.name: p.is_assigned() for p in widget._pills}
+    # Work is in both → assigned; Gaming only in pkg1 → not assigned
+    assert pill_states.get("Work") is True
+    assert pill_states.get("Gaming") is False
+
+
+def test_open_for_batch_save_applies_to_all_entries(modal):
+    widget, db = modal
+    repo = TagRepository(db)
+    repo.create_tag("Work", strings.TAG_PALETTE[0])
+
+    pkg1 = Package("vim", "2:8.2", 3584, "editors")
+    pkg2 = Package("nano", "6.0", 512, "editors")
+
+    assignments = repo.load_all_assignments()
+    entry1 = PackageEntry(package=pkg1, tags=assignments.get(("apt", "vim"), []))
+    entry2 = PackageEntry(package=pkg2, tags=assignments.get(("apt", "nano"), []))
+
+    widget.open_for_batch([entry1, entry2])
+
+    # Toggle the Work pill on for the batch
+    assert len(widget._pills) == 1
+    pill = widget._pills[0]
+    if not pill.is_assigned():
+        pill._on_click()
+
+    widget._on_save()
+
+    fresh = repo.load_all_assignments()
+    assert any(t.name == "Work" for t in fresh.get(("apt", "vim"), []))
+    assert any(t.name == "Work" for t in fresh.get(("apt", "nano"), []))

@@ -62,6 +62,19 @@ class TagRepository:
                 "INSERT INTO tags (name, color_hex) VALUES (?, ?)", (name, color_hex)
             )
 
+    def assigned_count(self, tag_name: str) -> int:
+        """Return how many packages have this tag assigned."""
+        with open_db(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM package_tags WHERE tag_name = ?", (tag_name,)
+            ).fetchone()
+        return row[0]
+
+    def delete_tag(self, tag_name: str) -> None:
+        """Delete a tag. FK CASCADE removes package_tags rows automatically."""
+        with open_db(self._db_path) as conn:
+            conn.execute("DELETE FROM tags WHERE name = ?", (tag_name,))
+
     def set_assignments(
         self, source: str, pkg_name: str, assigned_names: set[str]
     ) -> None:

@@ -168,7 +168,7 @@ def _entry_icon(entry: FileEntry) -> QIcon:
     if _THEME_VIABLE is None:
         _THEME_VIABLE = _check_theme_icons_viable()
         print(
-            f"eKploiter: icon theme viable = {_THEME_VIABLE}"
+            f"eKplorer: icon theme viable = {_THEME_VIABLE}"
             f" (theme: {QIcon.themeName() or 'none'})",
             file=sys.stderr,
         )

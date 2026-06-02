@@ -8,6 +8,11 @@ each helper; callers are responsible for re-querying on paletteChanged.
 from PyQt6.QtGui import QColor, QPalette
 
 
+def toolbar_surface(palette: QPalette) -> QColor:
+    """Distinct background for the toolbar/breadcrumb area (AlternateBase tone)."""
+    return QColor(palette.color(QPalette.ColorRole.AlternateBase))
+
+
 def modal_overlay() -> QColor:
     """Semi-transparent backdrop at ~35 % opacity for modal dim effect."""
     c = QColor(0, 0, 0)

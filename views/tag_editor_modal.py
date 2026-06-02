@@ -149,6 +149,7 @@ class TagModal(QFrame):
         super().__init__(parent)
         self._repo = TagRepository(db_path)
         self._entry: PackageEntry | None = None
+        self._batch_entries: list[PackageEntry] | None = None
         # Default to the third swatch in the curated palette (spec §12)
         self._selected_color: str = strings.TAG_PALETTE[2]
         self._pills: list[TagPill] = []
@@ -273,10 +274,23 @@ class TagModal(QFrame):
 
     def open_for(self, entry: PackageEntry | None) -> None:
         """Open for a package entry (assign mode) or None (create-only mode)."""
+        self._batch_entries = None
         self._entry = entry
         name = entry.package.name if entry else ""
         self._title_label.setText(strings.TAG_EDITOR_TITLE.format(name=name))
         self._subtitle_label.setVisible(entry is not None)
+        self._rebuild_pills()
+        self._name_edit.clear()
+        self.adjustSize()
+        self.setVisible(True)
+        self.raise_()
+
+    def open_for_batch(self, entries: list[PackageEntry]) -> None:
+        """Open for multiple package entries; tag pills start assigned only if ALL have them."""
+        self._entry = None
+        self._batch_entries = list(entries)
+        self._title_label.setText(strings.TAG_BATCH_TITLE.format(n=len(entries)))
+        self._subtitle_label.setVisible(True)
         self._rebuild_pills()
         self._name_edit.clear()
         self.adjustSize()
@@ -312,7 +326,14 @@ class TagModal(QFrame):
         self._no_tags_label.setVisible(False)
         self._pill_container.setVisible(True)
 
-        assigned_names = {t.name for t in self._entry.tags} if self._entry else set()
+        if self._batch_entries is not None:
+            if self._batch_entries:
+                sets = [frozenset(t.name for t in e.tags) for e in self._batch_entries]
+                assigned_names: set[str] = set(sets[0].intersection(*sets[1:]))
+            else:
+                assigned_names = set()
+        else:
+            assigned_names = {t.name for t in self._entry.tags} if self._entry else set()
         for tag in all_tags:
             pill = TagPill(tag, tag.name in assigned_names, self._pill_container)
             self._pill_layout.addWidget(pill)
@@ -334,7 +355,13 @@ class TagModal(QFrame):
             except Exception:
                 pass  # duplicate name — pill toggle still saves
 
-        if self._entry:
+        if self._batch_entries is not None:
+            assigned = {p.tag.name for p in self._pills if p.is_assigned()}
+            if name:
+                assigned.add(name)
+            for e in self._batch_entries:
+                self._repo.set_assignments(e.package.source, e.package.name, assigned)
+        elif self._entry:
             assigned = {p.tag.name for p in self._pills if p.is_assigned()}
             if name:
                 assigned.add(name)

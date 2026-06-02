@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=System eKploiter
+Name=System eKplorer
 GenericName=File and Software Manager
 Comment=Manage your files and installed software in one place
-Exec=ekploiter %u
-Icon=ekploiter
+Exec=ekplorer %u
+Icon=ekplorer
 Terminal=false
-StartupWMClass=ekploiter
+StartupWMClass=ekplorer
 Categories=System;FileManager;Qt;KDE;
 Keywords=files;software;apps;packages;drives;manager;explorer;
 MimeType=inode/directory;

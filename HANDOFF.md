@@ -1,7 +1,7 @@
-# System eKploiter — Handoff Notes
+# System eKplorer — Handoff Notes
 
 ## Current state
-- Spec: System_eKploiter_Specification_v02.docx (read this first)
+- Spec: System_eKplorer_Specification_v02.docx (read this first)
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
@@ -64,7 +64,7 @@
   existing sidebar category + tag filters; search query filters on contain
   (case-insensitive); bundled category icons in assets/category-icons/
   (13 keys, SVG+PNG each); three-tier resolution in PackageIconResolver:
-  Tier1=user override (~/.local/share/ekploiter/icons/), Tier2=QIcon.fromTheme
+  Tier1=user override (~/.local/share/ekplorer/icons/), Tier2=QIcon.fromTheme
   candidate chain (name→lower→flatpak DNS tail→hyphen prefixes, deduped),
   Tier3=bundled asset keyed by CATEGORY_ICON_KEYS, floor=unknown.svg (never
   null); resolver caches per (name,source), invalidate() clears+rescans;
@@ -88,7 +88,7 @@
 - M1: Drive tiles — real drives via df, usage pies, responsive 
   grid, Physical Devices header, QThread loader
 - M2: Drive labels + persistence — SQLite at 
-  ~/.local/share/ekploiter/data.db, label modal with 5×2 color 
+  ~/.local/share/ekplorer/data.db, label modal with 5×2 color 
   swatch grid, colored pill badges, theme.py surface system 
   (ratio-based, no hardcoded hex), udisks2 D-Bus auto-refresh 
   with 15s polling fallback, 250ms debounce, unmounted device 
@@ -603,7 +603,7 @@ for running outside a full Plasma session.
   requests `QIcon.fromTheme("folder")`, renders to a 16×16 pixmap, converts to image,
   scans for any non-transparent pixel with luminance > 40. Returns `True` if found.
 - Result cached in `_THEME_VIABLE`; one line printed to stderr:
-  `eKploiter: icon theme viable = True/False (theme: ...)`
+  `eKplorer: icon theme viable = True/False (theme: ...)`
 
 **`_entry_icon()` — two paths**:
 - `_THEME_VIABLE = False` (Bob's system): uses only `QFileIconProvider.icon(QFileInfo(path))`.
@@ -863,17 +863,17 @@ Two root causes:
 - Current dev machine: Ubuntu 24.04 + Plasma 5.27
   (original dev machine was Kubuntu 26.04 + Plasma 6)
 - theme.py integration testing deferred to a Plasma 6 machine
-- Python venv at ~/ekploiter/.venv — always activate before 
+- Python venv at ~/ekplorer/.venv — always activate before 
   running or testing
 
 ## How to run
-cd ~/ekploiter && source .venv/bin/activate && python main.py
+cd ~/ekplorer && source .venv/bin/activate && python main.py
 
 ## How to test
-cd ~/ekploiter && source .venv/bin/activate && pytest -v
+cd ~/ekplorer && source .venv/bin/activate && pytest -v
 
 ## How to start Claude Code
-cd ~/ekploiter && source .venv/bin/activate && claude
+cd ~/ekplorer && source .venv/bin/activate && claude
 
 ## Key architectural decisions (not in spec)
 - dpkg-query as package data source, NOT apt list --installed
@@ -892,7 +892,7 @@ cd ~/ekploiter && source .venv/bin/activate && claude
   column numbers everywhere.
 - PackageIconResolver(theme_lookup) lives in package_icon_resolver.py.
   theme_lookup defaults to QIcon.fromTheme; inject a stub in tests.
-  Tier 1: scans ~/.local/share/ekploiter/icons/ ONCE at construction (and
+  Tier 1: scans ~/.local/share/ekplorer/icons/ ONCE at construction (and
   on invalidate()); checks name.svg then name.png.
   Tier 2: _candidate_chain() yields: name, name.lower(), flatpak DNS tail
   (both cases), hyphen-prefix prefixes (both cases), deduped.
@@ -1331,3 +1331,90 @@ Schema (2): file_tags table created; cascade delete removes file_tags.
 Model (3): set_tag_map propagates; DisplayRole shows joined names; _SORT_ROLE returns first tag lowercase.
 Integration (3): FileView has entries_ready signal; FileManagerView._load_file_tags called on signal; assign_tags action calls _open_file_tag_modal.
 Also: fixed `test_v4_migration_sets_user_version` to use `== CURRENT_VERSION` (not hardcoded 4).
+
+## PropertiesPanel crash fix + FM tag dataChanged (post-M10e)
+
+### Part 1 — PropertiesPanel crash in dual-pane mode (`views/properties_panel.py`)
+
+**Root cause**: In dual-pane mode, rapidly selecting different files triggers `populate_general()` before
+the previous `_OpenWithLoader` worker has finished. `_OpenWithLoader` runs a subprocess (`xdg-mime query`),
+so `QThread.quit()` does not stop it mid-run. When the old worker's `apps_ready` signal fires after the
+new `populate_general()` has started, it overwrites the new UI state and can cause GC-SIGABRT if Python's
+garbage collector finalizes the stale wrapper while Qt's thread is still alive.
+
+**Fix: `_cancel_workers()` method**:
+- Disconnects `apps_ready` from `_on_apps_ready` on the OW worker.
+- Disconnects `checksums_ready` / `failed` from their slots on the CS worker.
+- Disconnects `done` / `failed` from their slots on the chmod worker.
+- Calls `quit()` + `wait(100)` on any running thread.
+- Sets all `_*_thread` / `_*_worker` attrs to `None`.
+- Threads are parented to `QApplication.instance()` (set previously) — they self-destruct via
+  `finished.connect(deleteLater)` when they eventually finish. Signal disconnection prevents stale
+  callbacks from touching UI during the overlap window.
+
+**Fix: generation counter**:
+- `self._generation: int` — incremented at the start of every `populate_general()` and `show_placeholder()`.
+- `self._ow_expected_gen: int` — captured inside `_populate_open_with()` at thread-start time.
+- `self._cs_expected_gen: int` — captured inside `_on_compute_checksums()` at thread-start time.
+- `_on_apps_ready()`: returns immediately if `_ow_expected_gen != _generation`.
+- `_on_checksums_ready()` / `_on_checksums_failed()`: return immediately if `_cs_expected_gen != _generation`.
+
+**Call sites updated**:
+- `populate_general()`: calls `_cancel_workers()` + increments `_generation` before any other work.
+- `show_placeholder()`: calls `_cancel_workers()` + increments `_generation`.
+- `_populate_open_with()`: removed redundant `if isRunning(): quit()` guard (handled by `_cancel_workers()`);
+  added `self._ow_expected_gen = self._generation`.
+- `_on_compute_checksums()`: added `self._cs_expected_gen = self._generation`.
+
+### Part 2 — FM tag dataChanged (already working, confirmed by test)
+M10e is complete and the tag-assign flow is fully wired:
+`FileTagModal.saved → _load_file_tags() → _left_view.set_tag_map() → _FileModel.set_tag_map() → dataChanged`
+Tags appear in the Tags column immediately after the modal closes, with no reload needed.
+No code changes needed; confirmed by `test_load_file_tags_triggers_data_changed_on_col_tags`.
+
+### Tests: 665/665 (20 in `tests/test_properties_panel_crash_fix.py`, 12 in `tests/test_tag_repaint_fix.py`)
+Cancel workers (6): safe when no workers; clears refs on mocked threads; disconnects OW signal; disconnects CS signals; disconnects chmod signals; calls quit+wait on running thread.
+Generation counter (8): increments on populate_general; increments on show_placeholder; _ow_expected_gen matches after populate; stale apps_ready discarded; current apps_ready applied; stale checksums_ready discarded; current checksums_ready applied; stale checksums_failed suppresses dialog.
+Crash resilience (4): populate_general twice doesn't crash; show_placeholder after populate clears workers; populate switches stack to tabs; show_placeholder switches to placeholder.
+FM tags (2): set_tag_map emits dataChanged on _COL_TAGS; dataChanged covers all rows.
+
+## Tag repaint fix + chmod generation guard (post-M10e fix pass)
+
+### Part 1 — Packages Tags column repaint (`views/packages_view.py`)
+
+**Root cause**: `_on_tags_saved()` called `self._model.set_entries(updated)` which uses
+`beginResetModel/endResetModel`. This reset the entire model, losing scroll position, selection,
+and sort order. Functionally correct, but disruptive to UX and not targeted.
+
+**Fix: `_PackageModel.refresh_tags(assignments)` (new method)**:
+- Iterates `_entries` in-place, replacing each entry's `.tags` list from `assignments` dict.
+- Emits `dataChanged` for `_COL_TAGS` only (row 0 to rowCount-1).
+- No-op when `_entries is None` (loading state).
+- `QSortFilterProxyModel` automatically re-evaluates `filterAcceptsRow` for changed rows when
+  `dataChanged` fires, so tag-filter visibility updates without manual `invalidateFilter()`.
+- Key is `(source, name)` tuple — works for both APT and Flatpak packages.
+
+**`_on_tags_saved()` simplified**:
+```python
+def _on_tags_saved(self) -> None:
+    self._dim.setVisible(False)
+    assignments = self._repo.load_all_assignments()
+    self._model.refresh_tags(assignments)
+    self._refresh_sidebar()
+```
+
+### Part 2 — FM Tags column (scope verdict)
+**M10e IS built.** The tag-assign flow exists and is wired:
+`_on_action_requested("assign_tags") → _open_file_tag_modal() → FileTagModal.saved → _load_file_tags() → set_tag_map() → dataChanged on _COL_TAGS`
+No code change needed; confirmed by test.
+
+### Part 3 — Chmod generation guard (`views/properties_panel.py`)
+Added `self._chmod_expected_gen: int = -1` to `__init__`. Set in `_on_chmod_clicked()`.
+Generation guard added to `_on_chmod_done()` and `_on_chmod_failed()` — stale chmod results
+from a previous file are discarded if the selection has moved on.
+
+### Tests: 665/665 (+12 new in `tests/test_tag_repaint_fix.py`)
+Packages refresh_tags (6): emits dataChanged on _COL_TAGS; covers all rows; updates entries in-place; clears absent tags; no-op when loading; handles flatpak source key.
+_on_tags_saved (1): triggers dataChanged not modelReset.
+FM (1): _load_file_tags → dataChanged on _COL_TAGS.
+Chmod guard (4): stale done doesn't re-enable button; stale failed suppresses dialog; current done re-enables; expected gen set on click.
