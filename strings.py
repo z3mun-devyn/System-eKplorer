@@ -581,3 +581,13 @@ FT_CANCEL_BTN        = "Cancel"
 # ── Default file manager registration ─────────────────────────────────────────
 ACTION_SET_DEFAULT_FM      = "Set as default file manager"
 NOTICE_SET_DEFAULT_FM_DONE = "eKplorer is now your default file manager."
+
+# ── Clipboard tab ─────────────────────────────────────────────────────────────
+TAB_CLIPBOARD              = "Clipboard"
+CLIPBOARD_EMPTY            = "Clipboard history is empty."
+CLIPBOARD_MAX_ENTRIES      = "Max entries:"
+CLIPBOARD_CLEAR_ALL        = "Clear All"
+CLIPBOARD_COPY_BTN         = "Copy"
+CLIPBOARD_COPIED_FLASH     = "Copied!"
+CLIPBOARD_OPEN_EDITOR_BTN  = "Open in Editor"
+CLIPBOARD_DELETE_BTN       = "Delete"

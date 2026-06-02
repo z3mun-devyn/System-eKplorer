@@ -1495,3 +1495,35 @@ Layout: `_default_fm_bar` (QWidget with QHBoxLayout) sits between the scroll are
 normalize_path_arg (6): strips file:// scheme; URL-decodes spaces; plain path unchanged; decodes without scheme; empty string; encoded slash.
 _try_become_secondary (6): returns True when connected; sends path as UTF-8 line; sends empty string + newline; returns False when no server; closes socket on success; does not write when not connected.
 _generate_desktop_file (9): exec contains sys.executable; exec contains main.py path; full exec line format; creates file when missing; not rewritten when exec unchanged (mtime stable); rewritten when exec changed; mime types present; StartupWMClass correct; creates nested directories.
+
+## Clipboard tab (text history, local, persistent)
+
+**Schema:** `CURRENT_VERSION` bumped to 6. `_V6_DDL` adds `clipboard_history(id INTEGER PK AUTOINCREMENT, content TEXT NOT NULL, captured_at TEXT NOT NULL, pinned INTEGER DEFAULT 0)`.
+
+**New files:**
+- `models/clipboard_entry.py` — `ClipboardEntry(id, content, captured_at, pinned)` dataclass.
+- `backends/clipboard_backend.py` — `ClipboardBackend`: `add_entry`, `list_entries`, `delete_entry`, `toggle_pin`, `clear_unpinned`, `enforce_limit`, `max_entries` property (r/w, reads/writes settings key `clipboard.max_entries`, default 10, min 1).
+- `views/clipboard_view.py` — `ClipboardView(QWidget)`.
+
+**Capture guard (`_self_writing`):** Set True before any `clipboard.setText()` inside the tab, cleared in a `try/finally`. Prevents our own Copy button from adding a duplicate. File operations are also guarded: `cb.mimeData().hasUrls()` → skip. Consecutive duplicate detection: compares incoming text to `max(entries, key=lambda e: e.id).content`.
+
+**Eviction:** `add_entry()` inserts first, then runs `DELETE ... LIMIT -1 OFFSET max_entries` targeting unpinned rows ordered by `id DESC` — pinned rows are never touched. `enforce_limit()` runs the same DELETE on demand (called when spinbox changes).
+
+**List ordering:** `ORDER BY pinned DESC, id DESC` — pinned entries float to the top; within each group newest-first.
+
+**`_EntryWidget`:** Two-row layout (pin button + content preview + timestamp / action buttons). Pin uses `QIcon.fromTheme("bookmark"/"bookmark-new")`. Copy button flashes "Copied!" for 1 second. Open in Editor: `NamedTemporaryFile(suffix=".txt", delete=False)` + `subprocess.Popen(["xdg-open", tmp])`. Delete: calls backend + reload.
+
+**Tab:** 5th tab, `_chrome_icon("edit-paste", SP_FileIcon)`. `ClipboardTab` wrapper in `main.py`. `ClipboardView` connects to `QApplication.clipboard().dataChanged` in its `__init__` — this is additive alongside the FM's existing `_on_clipboard_changed` connection (both handlers coexist safely).
+
+**FM clipboard not disrupted:** FM uses `setMimeData()` with `hasUrls()`-triggering MIME. The clipboard view's handler returns immediately on `hasUrls()`, leaving FM clipboard behavior untouched.
+
+### Tests: 708/708 (+22 in `tests/test_clipboard_backend.py`)
+Schema (2): clipboard_history table exists; CURRENT_VERSION == 6.
+add_entry/list (4): round trip; newest-first within unpinned; respects max_entries limit; evicts oldest not newest.
+Pinned survives eviction (2): pinned entries survive; pinned doesn't reduce unpinned capacity.
+delete_entry (2): removes row; nonexistent is noop.
+toggle_pin (3): false→true; true→false; double toggle restores original state.
+clear_unpinned (3): removes all unpinned; leaves pinned intact; multiple pinned all survive.
+max_entries setting (3): default 10; persists across instances; minimum clamped to 1.
+list ordering (1): pinned appear before unpinned.
+enforce_limit (2): trims to new max; preserves pinned.

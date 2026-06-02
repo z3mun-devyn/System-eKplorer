@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 import strings
+from views.clipboard_view import ClipboardView
 from views.dashboard_view import DashboardView
 from views.file_manager_view import FileManagerView
 from views.file_view import _chrome_icon
@@ -82,6 +83,15 @@ class TerminalTab(QWidget):
         layout.addWidget(self.terminal_view)
 
 
+class ClipboardTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.clipboard_view = ClipboardView()
+        layout.addWidget(self.clipboard_view)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -95,6 +105,7 @@ class MainWindow(QMainWindow):
         self._file_manager_tab = FileManagerTab()
         self._packages_tab = PackagesTab()
         self._terminal_tab = TerminalTab()
+        self._clipboard_tab = ClipboardTab()
 
         self._tabs.addTab(self._dashboard_tab, strings.TAB_DASHBOARD)
         self._fm_index = self._tabs.addTab(
@@ -107,6 +118,11 @@ class MainWindow(QMainWindow):
             self._terminal_tab,
             _chrome_icon("utilities-terminal", QStyle.StandardPixmap.SP_ComputerIcon),
             strings.TAB_TERMINAL,
+        )
+        self._tabs.addTab(
+            self._clipboard_tab,
+            _chrome_icon("edit-paste", QStyle.StandardPixmap.SP_FileIcon),
+            strings.TAB_CLIPBOARD,
         )
 
         self._tabs.setCurrentIndex(0)  # Dashboard selected by default (spec §7)

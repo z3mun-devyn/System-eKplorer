@@ -4,7 +4,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".local" / "share" / "ekplorer" / "data.db"
 
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 
 _V1_DDL = [
     """
@@ -72,6 +72,17 @@ _V5_DDL = [
     """,
 ]
 
+_V6_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS clipboard_history (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        content     TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        pinned      INTEGER DEFAULT 0
+    )
+    """,
+]
+
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     uv = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -103,6 +114,10 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
 
     if uv < 5:
         for stmt in _V5_DDL:
+            conn.execute(stmt)
+
+    if uv < 6:
+        for stmt in _V6_DDL:
             conn.execute(stmt)
 
     conn.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
