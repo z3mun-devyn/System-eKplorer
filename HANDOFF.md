@@ -1418,3 +1418,24 @@ Packages refresh_tags (6): emits dataChanged on _COL_TAGS; covers all rows; upda
 _on_tags_saved (1): triggers dataChanged not modelReset.
 FM (1): _load_file_tags → dataChanged on _COL_TAGS.
 Chmod guard (4): stale done doesn't re-enable button; stale failed suppresses dialog; current done re-enables; expected gen set on click.
+
+## Global rename: eKploiter → eKplorer (tag: v0.1-alpha-ekplorer)
+
+**Commit:** `fb38662 rename: eKploiter → eKplorer`  
+**Tag:** `v0.1-alpha-ekplorer`
+
+Pure string/path rename — no logic changes. Three substitution patterns applied to all `.py`, `.md`, `.desktop`, `.toml` files:
+- `"System eKploiter"` → `"System eKplorer"`
+- `"eKploiter"` → `"eKplorer"`
+- `"ekploiter"` → `"ekplorer"`
+
+Asset files renamed: `assets/ekploiter.desktop` → `assets/ekplorer.desktop`, `assets/icons/ekploiter.png` → `assets/icons/ekplorer.png`.
+
+**Data directory migration** (`main.py`, `_migrate_data_dir()`):  
+Called at startup before the database opens. If `~/.local/share/ekploiter/` exists **and** `~/.local/share/ekplorer/` does not, the old directory is renamed in-place via `Path.rename()`, preserving all user data (DB, icons, settings) transparently. Logs one line to stderr. If both directories exist (user has run both versions), `ekplorer/` is used and `ekploiter/` is left untouched — no merge, no delete.
+
+**Intentional "ekploiter" occurrences kept in `main.py`** (lines 129 and 134): `_OLD_DATA_DIR` constant and its docstring reference the *old* directory path by design — these must not be renamed or the migration breaks.
+
+**DB path** (`models/database.py`): `DB_PATH = Path.home() / ".local" / "share" / "ekplorer" / "data.db"`
+
+Tests: 665/665 (no new tests; no test assertions checked the old name string).
