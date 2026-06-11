@@ -18,7 +18,7 @@ from backends.file_ops_backend import (
 )
 from models.file_entry import FileEntry, fmt_size, mime_label
 
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import Qt, QObject, QThread
 from PyQt6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -81,15 +81,21 @@ class PropertiesPanel(QWidget):
         self._stack.setCurrentIndex(0)
         self._current_entry: FileEntry | None = None
 
-        # Incremented at the start of every populate_general() / show_placeholder().
-        # Each worker callback checks its captured expected generation against this
-        # value; a mismatch means the result is stale and must be discarded.
+        # Generation counter — incremented on every populate_general() /
+        # show_placeholder(). Each spawned worker captures its own gen value;
+        # result slots discard data when self._generation != captured gen.
         self._generation: int = 0
         self._ow_expected_gen: int = -1
         self._cs_expected_gen: int = -1
         self._chmod_expected_gen: int = -1
 
-        # Thread refs kept as attrs to prevent GC-during-running-thread SIGABRT
+        # Unified list of (thread, worker) pairs — kept alive here so GC cannot
+        # collect a QThread while it is still running (avoids SIGABRT on rapid
+        # file clicks in dual-pane with Properties visible).
+        self._workers: list[tuple[QThread, QObject]] = []
+
+        # Individual refs are still set per-worker for backward compat with
+        # _cancel_workers signal-disconnection logic.
         self._cs_thread: QThread | None = None
         self._cs_worker: _ChecksumWorker | None = None
         self._chmod_thread: QThread | None = None
@@ -258,6 +264,10 @@ class PropertiesPanel(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    def shutdown(self) -> None:
+        """Drain all in-flight workers; safe to call from any pane teardown."""
+        self._cancel_workers()
+
     def show_placeholder(self) -> None:
         self._cancel_workers()
         self._generation += 1
@@ -280,43 +290,50 @@ class PropertiesPanel(QWidget):
         self.show_file()
 
     def _cancel_workers(self) -> None:
-        """Disconnect in-flight worker signals and release thread refs.
+        """Disconnect in-flight worker signals and drain threads.
 
-        _OpenWithLoader uses a subprocess so quit() won't stop it mid-run;
-        signal disconnection + generation counter guard against stale results.
+        Three-layer crash prevention:
+        1. Signal disconnection prevents stale callbacks from updating the UI.
+        2. quit() + wait(200) drains threads; self._workers list keeps refs alive
+           during the wait so GC cannot destroy a running QThread (SIGABRT risk).
+        3. Generation counter in each result slot discards late arrivals.
         """
         if self._ow_worker is not None:
             try:
                 self._ow_worker.apps_ready.disconnect(self._on_apps_ready)
             except RuntimeError:
                 pass
-        if self._ow_thread is not None and self._ow_thread.isRunning():
-            self._ow_thread.quit()
-            self._ow_thread.wait(100)
-        self._ow_thread = None
-        self._ow_worker = None
-
         if self._cs_worker is not None:
             try:
                 self._cs_worker.checksums_ready.disconnect(self._on_checksums_ready)
                 self._cs_worker.failed.disconnect(self._on_checksums_failed)
             except RuntimeError:
                 pass
-        if self._cs_thread is not None and self._cs_thread.isRunning():
-            self._cs_thread.quit()
-            self._cs_thread.wait(100)
-        self._cs_thread = None
-        self._cs_worker = None
-
         if self._chmod_worker is not None:
             try:
                 self._chmod_worker.done.disconnect(self._on_chmod_done)
                 self._chmod_worker.failed.disconnect(self._on_chmod_failed)
             except RuntimeError:
                 pass
-        if self._chmod_thread is not None and self._chmod_thread.isRunning():
-            self._chmod_thread.quit()
-            self._chmod_thread.wait(100)
+
+        # Quit+wait all threads while self._workers holds refs (prevents GC SIGABRT).
+        # Guard with RuntimeError: deleteLater fires on finished, but the tuple lingers
+        # in self._workers — the C++ QThread object may already be gone by the next call.
+        for thread, _worker in self._workers:
+            try:
+                if thread is not None and thread.isRunning():
+                    thread.quit()
+                    if not thread.wait(3000):
+                        thread.terminate()
+                        thread.wait()
+            except RuntimeError:
+                pass
+        self._workers.clear()
+
+        self._ow_thread = None
+        self._ow_worker = None
+        self._cs_thread = None
+        self._cs_worker = None
         self._chmod_thread = None
         self._chmod_worker = None
 
@@ -380,9 +397,6 @@ class PropertiesPanel(QWidget):
         self._chmod_btn.setEnabled(False)
         self._chmod_expected_gen = self._generation
 
-        if self._chmod_thread and self._chmod_thread.isRunning():
-            self._chmod_thread.quit()
-
         self._chmod_thread = QThread(parent=QApplication.instance())
         self._chmod_worker = _ChmodWorker(self._current_entry.path, mode_int)
         self._chmod_worker.moveToThread(self._chmod_thread)
@@ -393,6 +407,7 @@ class PropertiesPanel(QWidget):
         self._chmod_worker.failed.connect(self._chmod_thread.quit)
         self._chmod_thread.finished.connect(self._chmod_worker.deleteLater)
         self._chmod_thread.finished.connect(self._chmod_thread.deleteLater)
+        self._workers.append((self._chmod_thread, self._chmod_worker))
         self._chmod_thread.start()
 
     def _on_chmod_done(self) -> None:
@@ -423,9 +438,6 @@ class PropertiesPanel(QWidget):
         self._cs_btn.setText(strings.PROP_CHECKSUMS_COMPUTING)
         self._cs_expected_gen = self._generation
 
-        if self._cs_thread and self._cs_thread.isRunning():
-            self._cs_thread.quit()
-
         self._cs_thread = QThread(parent=QApplication.instance())
         self._cs_worker = _ChecksumWorker(self._current_entry.path)
         self._cs_worker.moveToThread(self._cs_thread)
@@ -436,6 +448,7 @@ class PropertiesPanel(QWidget):
         self._cs_worker.failed.connect(self._cs_thread.quit)
         self._cs_thread.finished.connect(self._cs_worker.deleteLater)
         self._cs_thread.finished.connect(self._cs_thread.deleteLater)
+        self._workers.append((self._cs_thread, self._cs_worker))
         self._cs_thread.start()
 
     def _on_checksums_ready(self, sums: dict) -> None:
@@ -484,6 +497,7 @@ class PropertiesPanel(QWidget):
         self._ow_worker.apps_ready.connect(self._ow_thread.quit)
         self._ow_thread.finished.connect(self._ow_worker.deleteLater)
         self._ow_thread.finished.connect(self._ow_thread.deleteLater)
+        self._workers.append((self._ow_thread, self._ow_worker))
         self._ow_thread.start()
 
     def _on_apps_ready(self, apps: list) -> None:

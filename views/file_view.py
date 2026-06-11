@@ -31,6 +31,7 @@ from PyQt6.QtCore import (
     QAbstractTableModel,
     QEvent,
     QFileInfo,
+    QItemSelectionModel,
     QMimeData,
     QMimeDatabase,
     QModelIndex,
@@ -633,6 +634,8 @@ class FileView(QWidget):
         self._tree.setAlternatingRowColors(False)
         self._tree.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._tree.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
         self._tree.setSortingEnabled(True)
         self._tree.sortByColumn(_COL_NAME, Qt.SortOrder.AscendingOrder)
         self._tree.setMouseTracking(True)
@@ -835,11 +838,41 @@ class FileView(QWidget):
 
     def _on_context_menu(self, pos) -> None:
         sender = self.sender()
+        # customContextMenuRequested emits pos in viewport coordinates (the
+        # DnD eventFilter explicit pass-through ensures the event reaches
+        # viewportEvent before customContextMenuRequested fires).
         idx = sender.indexAt(pos)
-        entries = self._get_selected_entries()
-        # If clicking outside any item, treat as empty-area click
+
         if not idx.isValid():
             entries = []
+        else:
+            # Verify the proxy index maps to a real file entry (loading rows
+            # carry no entry data and should fall through to the empty-area menu).
+            src = self._proxy.mapToSource(idx.siblingAtColumn(_COL_ICON))
+            entry = self._model.data(src, _ENTRY_ROLE)
+            if entry is None:
+                entries = []
+            else:
+                sel_model = sender.selectionModel()
+                # Right-click does not update Qt's selection model (mousePressEvent
+                # returns early for non-left-button clicks). Force-select the row
+                # under the cursor so _get_selected_entries() returns the right item.
+                # If the clicked row is already part of a multi-selection, preserve it.
+                # Compare via source-model index (column-agnostic) so a right-click
+                # on any cell in a selected row is correctly treated as "already selected".
+                selected_rows = sel_model.selectedRows()
+                already = any(
+                    self._proxy.mapToSource(r.siblingAtColumn(_COL_ICON)) ==
+                    self._proxy.mapToSource(idx.siblingAtColumn(_COL_ICON))
+                    for r in selected_rows
+                )
+                if not already:
+                    sel_model.select(
+                        idx,
+                        QItemSelectionModel.SelectionFlag.ClearAndSelect
+                        | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+                entries = self._get_selected_entries()
 
         single = len(entries) == 1
         multi  = len(entries) > 1
@@ -912,6 +945,11 @@ class FileView(QWidget):
         self.selection_changed.emit(self._get_selected_entries())
 
     def eventFilter(self, obj, event) -> bool:
+        # Never consume ContextMenu events — they must reach viewportEvent() so
+        # that customContextMenuRequested fires with correct viewport coordinates.
+        if event.type() == QEvent.Type.ContextMenu:
+            return False
+
         # Ctrl+Scroll on either viewport → zoom_requested signal
         if event.type() == QEvent.Type.Wheel:
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:

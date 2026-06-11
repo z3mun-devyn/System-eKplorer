@@ -206,3 +206,87 @@ def test_system_status_not_default_when_query_returns_none(tmp_path, monkeypatch
     dlg = _make_dialog(tmp_path, monkeypatch, default_fm=None)
     assert dlg._sys_fm_status.text() == strings.CONFIGURE_SYS_FM_STATUS_NOT
     dlg.reject()
+
+
+# ── Dashboard page ────────────────────────────────────────────────────────────
+
+def test_configure_dashboard_defaults_to_simple(tmp_path, monkeypatch):
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    assert dlg._dash_simple_rb.isChecked()
+    assert not dlg._dash_advanced_rb.isChecked()
+    dlg.reject()
+
+
+def test_configure_dashboard_reads_simple_setting(tmp_path, monkeypatch):
+    db = tmp_path / "data.db"
+    SettingsRepository(db).set("dashboard.view_mode", "simple")
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    assert dlg._dash_simple_rb.isChecked()
+    dlg.reject()
+
+
+def test_configure_dashboard_reads_advanced_setting(tmp_path, monkeypatch):
+    db = tmp_path / "data.db"
+    SettingsRepository(db).set("dashboard.view_mode", "advanced")
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    assert dlg._dash_advanced_rb.isChecked()
+    dlg.reject()
+
+
+def test_configure_dashboard_ok_writes_advanced(tmp_path, monkeypatch):
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    dlg._dash_advanced_rb.setChecked(True)
+    dlg._on_ok()
+    assert SettingsRepository(tmp_path / "data.db").get("dashboard.view_mode") == "advanced"
+
+
+def test_configure_dashboard_ok_writes_simple(tmp_path, monkeypatch):
+    db = tmp_path / "data.db"
+    SettingsRepository(db).set("dashboard.view_mode", "advanced")
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    dlg._dash_simple_rb.setChecked(True)
+    dlg._on_ok()
+    assert SettingsRepository(db).get("dashboard.view_mode") == "simple"
+
+
+def test_configure_dashboard_cancel_does_not_write(tmp_path, monkeypatch):
+    db = tmp_path / "data.db"
+    SettingsRepository(db).set("dashboard.view_mode", "simple")
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    dlg._dash_advanced_rb.setChecked(True)
+    dlg.reject()
+    assert SettingsRepository(db).get("dashboard.view_mode") == "simple"
+
+
+# ── SMART disk-group status ───────────────────────────────────────────────────
+
+def test_smart_group_status_in_group(tmp_path, monkeypatch):
+    """System page shows green in-group message when user is a member of disk group."""
+    import grp
+    from unittest.mock import MagicMock
+    import views.configure_dialog as cd_mod
+
+    mock_group = MagicMock()
+    mock_group.gr_mem = ["testuser"]
+    monkeypatch.setattr(grp, "getgrnam", lambda name: mock_group)
+    monkeypatch.setattr(cd_mod.getpass, "getuser", lambda: "testuser")
+
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    assert "✓" in dlg._smart_group_status.text()
+    dlg.reject()
+
+
+def test_smart_group_status_not_in_group(tmp_path, monkeypatch):
+    """System page shows not-in-group message when user is absent from disk group."""
+    import grp
+    from unittest.mock import MagicMock
+    import views.configure_dialog as cd_mod
+
+    mock_group = MagicMock()
+    mock_group.gr_mem = ["root", "otheruser"]
+    monkeypatch.setattr(grp, "getgrnam", lambda name: mock_group)
+    monkeypatch.setattr(cd_mod.getpass, "getuser", lambda: "testuser")
+
+    dlg = _make_dialog(tmp_path, monkeypatch)
+    assert "✗" in dlg._smart_group_status.text()
+    dlg.reject()

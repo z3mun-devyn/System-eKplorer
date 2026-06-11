@@ -30,7 +30,7 @@ class TrashEntry:
     trash_path:    Path      # full path inside files/
     original_path: Path      # from .trashinfo Path=
     deletion_date: datetime  # from .trashinfo DeletionDate=
-    size:          int       # bytes (recursive for dirs)
+    size:          int       # bytes for files; -1 sentinel for directories
     is_dir:        bool
     mime_type:     str = ""
 
@@ -58,14 +58,17 @@ class TrashBackend:
         """Return all trash entries, newest first."""
         entries: list[TrashEntry] = []
         for info_dir in self._all_info_dirs():
-            files_dir = info_dir.parent / "files"
-            for trashinfo in _safe_glob(info_dir, "*.trashinfo"):
-                try:
-                    entry = self._parse_trashinfo(trashinfo, files_dir)
-                    if entry is not None:
-                        entries.append(entry)
-                except Exception:
-                    continue
+            try:
+                files_dir = info_dir.parent / "files"
+                for trashinfo in _safe_glob(info_dir, "*.trashinfo"):
+                    try:
+                        entry = self._parse_trashinfo(trashinfo, files_dir)
+                        if entry is not None:
+                            entries.append(entry)
+                    except Exception:
+                        continue
+            except (PermissionError, OSError):
+                continue  # unreadable per-mount trash dir — skip, keep listing
         entries.sort(key=lambda e: e.deletion_date, reverse=True)
         return entries
 
@@ -182,24 +185,32 @@ class TrashBackend:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _all_info_dirs(self) -> list[Path]:
-        """Return all trash info directories to scan (main + per-mount)."""
+        """Return all trash info directories to scan (main first, then per-mount)."""
         dirs: list[Path] = []
         if self._info_dir.exists():
             dirs.append(self._info_dir)
         for mp in self._mount_points():
-            td = mp / f".Trash-{self._uid}" / "info"
-            if td.exists():
-                dirs.append(td)
+            try:
+                td = mp / f".Trash-{self._uid}" / "info"
+                if td.exists():
+                    dirs.append(td)
+            except (PermissionError, OSError):
+                continue
         return dirs
 
     def _mount_points(self) -> list[Path]:
-        """Read real mount points from /proc/mounts, skipping pseudo-filesystems."""
+        """Read real mount points from /proc/mounts, skipping pseudo-filesystems
+        and runtime/namespace paths that never hold user trash."""
         _SKIP_FS = frozenset({
             "proc", "sysfs", "devtmpfs", "tmpfs", "cgroup", "cgroup2",
             "pstore", "bpf", "tracefs", "debugfs", "mqueue", "hugetlbfs",
             "devpts", "securityfs", "fusectl", "efivarfs", "autofs",
             "configfs", "squashfs",
         })
+        _SKIP_PREFIXES = (
+            "/run", "/proc", "/sys", "/dev", "/snap",
+            "/var/lib/snapd", "/var/lib/docker",
+        )
         try:
             mounts: list[Path] = []
             with open("/proc/mounts") as f:
@@ -211,8 +222,14 @@ class TrashBackend:
                     if fs_type in _SKIP_FS:
                         continue
                     mp = Path(parts[1])
-                    if mp != Path("/"):
-                        mounts.append(mp)
+                    mp_str = str(mp)
+                    if mp == Path("/"):
+                        continue
+                    if mp_str.startswith(_SKIP_PREFIXES):
+                        continue
+                    if "/snapd/ns/" in mp_str or "/.mnt" in mp_str:
+                        continue
+                    mounts.append(mp)
             return mounts
         except Exception:
             return []
@@ -264,7 +281,7 @@ def _safe_glob(directory: Path, pattern: str) -> list[Path]:
 def _entry_size(path: Path) -> int:
     try:
         if path.is_dir():
-            return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+            return -1  # never recurse; size shown as "—" in TrashView
         return path.stat().st_size
     except (PermissionError, OSError):
         return 0
@@ -274,6 +291,18 @@ def _entry_size(path: Path) -> int:
 
 try:
     from PyQt6.QtCore import QObject, pyqtSignal as _Signal
+
+    class _TrashListWorker(QObject):
+        """Calls list_trash() on a QThread and emits the result."""
+        ready  = _Signal(list)
+        failed = _Signal(str)
+
+        def run(self) -> None:
+            try:
+                entries = TrashBackend().list_trash()
+                self.ready.emit(entries)
+            except Exception as exc:
+                self.failed.emit(str(exc))
 
     class _TrashWorker(QObject):
         """Runs restore / empty / delete_permanently on a QThread."""

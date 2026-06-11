@@ -482,3 +482,80 @@ def test_space_regression_after_arrow_fix(monkeypatch):
                             Qt.KeyboardModifier.NoModifier, " ")
     written = _collect_writes(view, space_event, monkeypatch)
     assert b" " in written
+
+
+# ── Ctrl+C / Ctrl+Shift+C / Ctrl+Shift+V ─────────────────────────────────────
+
+def _make_ctrl_key(key, shift=False):
+    """Make a Ctrl+(Shift+)key press event."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent
+    mods = Qt.KeyboardModifier.ControlModifier
+    if shift:
+        mods |= Qt.KeyboardModifier.ShiftModifier
+    return QKeyEvent(QEvent.Type.KeyPress, key, mods, "")
+
+
+def test_ctrl_c_sends_etx(monkeypatch):
+    """Ctrl+C (no Shift) sends \\x03 (SIGINT / ETX) to the PTY."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import Qt
+    _app = QApplication.instance() or QApplication([])
+    from views.terminal_view import TerminalView
+
+    view = TerminalView()
+    written = _collect_writes(view, _make_ctrl_key(Qt.Key.Key_C), monkeypatch)
+    assert b"\x03" in written
+
+
+def test_ctrl_shift_c_copies_selection(monkeypatch):
+    """Ctrl+Shift+C copies selected text to the system clipboard, writes nothing to PTY."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import Qt
+    _app = QApplication.instance() or QApplication([])
+    from views.terminal_view import TerminalView
+
+    view = TerminalView()
+    view._display.setPlainText("hello world")
+    # Select all
+    view._display.selectAll()
+
+    written = _collect_writes(view, _make_ctrl_key(Qt.Key.Key_C, shift=True), monkeypatch)
+
+    assert written == []  # nothing written to PTY
+    assert QApplication.clipboard().text() == "hello world"
+
+
+def test_ctrl_shift_v_pastes_clipboard(monkeypatch):
+    """Ctrl+Shift+V sends clipboard text to the PTY as UTF-8 bytes."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import Qt
+    _app = QApplication.instance() or QApplication([])
+    from views.terminal_view import TerminalView
+
+    QApplication.clipboard().setText("paste me")
+    view = TerminalView()
+    written = _collect_writes(view, _make_ctrl_key(Qt.Key.Key_V, shift=True), monkeypatch)
+
+    assert b"paste me" in written
+
+
+def test_ctrl_shift_c_noop_without_selection(monkeypatch):
+    """Ctrl+Shift+C with no selection writes nothing to PTY and doesn't change clipboard."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import Qt
+    _app = QApplication.instance() or QApplication([])
+    QApplication.clipboard().setText("sentinel")
+    from views.terminal_view import TerminalView
+
+    view = TerminalView()
+    # No text selected
+    written = _collect_writes(view, _make_ctrl_key(Qt.Key.Key_C, shift=True), monkeypatch)
+
+    assert written == []
+    assert QApplication.clipboard().text() == "sentinel"  # unchanged

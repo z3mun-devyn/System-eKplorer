@@ -4,14 +4,18 @@ import subprocess
 from datetime import datetime, timezone
 
 import strings
+from backends.disk_scan_backend import DISK_CATEGORIES, DISK_FREE_COLOR, DiskScanWorker
+from backends.settings_backend import SettingsRepository
+from backends.smart_backend import SmartBackend, SmartData
 from backends.storage_backend import StorageBackend
 from backends.udisks_watcher import UDisks2Watcher
 from models.database import open_db
 from models.storage import Drive, UnmountedDrive
 
-from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPalette, QPen
+from PyQt6.QtCore import QObject, QRectF, QSize, QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QIcon, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -21,9 +25,12 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -529,6 +536,507 @@ class UnmountedDriveTile(QFrame):
         self._thread.start()
 
 
+class _SegmentedPieWidget(QWidget):
+    """Donut chart showing disk usage by category."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._named: dict[str, int] = {}
+        self._other: int = 0    # used but not covered by named scan categories
+        self._free: int = 0     # drive.free_bytes
+        self._total: int = 0    # drive.total_bytes
+        self._basis: str = "used"
+
+    def set_basis(self, basis: str) -> None:
+        self._basis = basis
+        self.update()
+
+    def sizeHint(self) -> QSize:
+        return QSize(160, 160)
+
+    def set_data(
+        self,
+        category_bytes: dict[str, int],
+        other_bytes: int,
+        free_bytes: int,
+        total_bytes: int,
+    ) -> None:
+        self._named = category_bytes
+        self._other = other_bytes
+        self._free = free_bytes
+        self._total = total_bytes
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cx, cy = self.width() // 2, self.height() // 2
+        outer_r = min(cx, cy) - 4
+        inner_r = outer_r * 5 // 10
+        outer_rect = QRectF(cx - outer_r, cy - outer_r, outer_r * 2, outer_r * 2)
+
+        if not self._named and self._other == 0 and self._total <= 0:
+            painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Mid), 1))
+            painter.setBrush(QBrush(self.palette().color(QPalette.ColorRole.Mid)))
+            painter.drawEllipse(outer_rect)
+            inner_rect = QRectF(cx - inner_r, cy - inner_r, inner_r * 2, inner_r * 2)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(self.palette().color(QPalette.ColorRole.Base)))
+            painter.drawEllipse(inner_rect)
+            return
+
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Dark), 1))
+
+        # Named categories largest-first, then Other (uncategorized), then Free Space
+        segments: list[tuple[str, int]] = sorted(
+            self._named.items(), key=lambda x: x[1], reverse=True,
+        )
+        if self._other > 0:
+            segments.append(("Other", self._other))
+        segments.append(("_free", self._free))
+
+        if self._basis == "used":
+            used_total = self._total - self._free
+            denom = used_total if used_total > 0 else 1
+            draw_segments = [(c, v) for c, v in segments if c != "_free"]
+        else:
+            denom = self._total
+            draw_segments = segments
+
+        start = 90 * 16
+        for cat, val in draw_segments:
+            if denom == 0 or val <= 0:
+                continue
+            span = int(val / denom * 360 * 16)
+            if span == 0:
+                continue
+            color = (
+                QColor(DISK_FREE_COLOR) if cat == "_free"
+                else QColor(DISK_CATEGORIES.get(cat, "#566573"))
+            )
+            painter.setBrush(QBrush(color))
+            painter.drawPie(outer_rect, start, span)
+            start -= span
+
+        inner_rect = QRectF(cx - inner_r, cy - inner_r, inner_r * 2, inner_r * 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.palette().color(QPalette.ColorRole.Base)))
+        painter.drawEllipse(inner_rect)
+
+        used_bytes = self._total - self._free
+        used_pct = int(used_bytes / self._total * 100) if self._total else 0
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.WindowText)))
+        painter.drawText(inner_rect, Qt.AlignmentFlag.AlignCenter, f"{used_pct}%")
+
+
+def _fmt_bytes(b: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024:
+            return f"{b:.1f} {unit}" if unit != "B" else f"{b} B"
+        b //= 1024
+    return f"{b} PB"
+
+
+class AdvancedDriveTile(QFrame):
+    navigate_requested = pyqtSignal(str)
+
+    def __init__(self, drive: Drive, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._drive = drive
+        self._hovered = False
+        self._scan_started = False
+        self._scan_thread: QThread | None = None
+        self._scan_worker = None
+        self._smart_thread: QThread | None = None
+        self._smart_worker = None
+
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAutoFillBackground(False)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(320)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        # ── Header (same as DriveTile) ────────────────────────────────────────
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+
+        name_label = QLabel(drive.name)
+        font = name_label.font()
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 1)
+        name_label.setFont(font)
+        name_label.setWordWrap(True)
+        header_row.addWidget(name_label, stretch=1)
+
+        self._badge = QLabel()
+        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._badge.setFixedHeight(20)
+        header_row.addWidget(self._badge, stretch=0)
+
+        rescan_btn = QPushButton(strings.DASHBOARD_RESCAN)
+        rescan_btn.setFlat(True)
+        rescan_btn.clicked.connect(self._start_scan)
+        header_row.addWidget(rescan_btn)
+
+        layout.addLayout(header_row)
+
+        info_label = QLabel(f"{drive.device}  ·  {drive.fs_type}")
+        info_label.setStyleSheet("color: palette(mid);")
+        layout.addWidget(info_label)
+
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(12)
+        stats_row.addWidget(QLabel(f"{drive.used_str} used"))
+        stats_row.addWidget(QLabel(f"{drive.free_str} free"))
+        total_lbl = QLabel(f"of {drive.total_str}")
+        total_lbl.setStyleSheet("color: palette(mid);")
+        stats_row.addWidget(total_lbl)
+        stats_row.addStretch()
+        layout.addLayout(stats_row)
+
+        # ── Scan area ─────────────────────────────────────────────────────────
+        self._scan_stack = QStackedWidget()
+
+        scanning_page = QWidget()
+        sp_layout = QVBoxLayout(scanning_page)
+        sp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 0)
+        sp_layout.addWidget(self._progress_bar)
+        sp_layout.addWidget(QLabel(strings.DASHBOARD_SCANNING))
+        self._scan_stack.addWidget(scanning_page)
+
+        self._results_page = QWidget()
+        self._results_layout = QHBoxLayout(self._results_page)
+
+        pie_col = QWidget()
+        pie_col_layout = QVBoxLayout(pie_col)
+        pie_col_layout.setContentsMargins(0, 0, 0, 0)
+        pie_col_layout.setSpacing(4)
+
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(2)
+        self._pie_total_btn = QPushButton("Total")
+        self._pie_total_btn.setCheckable(True)
+        self._pie_total_btn.setFlat(True)
+        self._pie_total_btn.setFixedHeight(20)
+        self._pie_used_btn = QPushButton("Used")
+        self._pie_used_btn.setCheckable(True)
+        self._pie_used_btn.setFlat(True)
+        self._pie_used_btn.setFixedHeight(20)
+        self._pie_toggle_group = QButtonGroup(self)
+        self._pie_toggle_group.addButton(self._pie_total_btn, 0)
+        self._pie_toggle_group.addButton(self._pie_used_btn, 1)
+        self._pie_toggle_group.setExclusive(True)
+        toggle_row.addWidget(self._pie_total_btn)
+        toggle_row.addWidget(self._pie_used_btn)
+        toggle_row.addStretch()
+        pie_col_layout.addLayout(toggle_row)
+
+        self._pie_widget = _SegmentedPieWidget()
+        pie_col_layout.addWidget(self._pie_widget)
+        self._results_layout.addWidget(pie_col)
+
+        self._legend_widget = QWidget()
+        self._legend_layout = QVBoxLayout(self._legend_widget)
+        self._legend_layout.setSpacing(3)
+        self._legend_layout.setContentsMargins(8, 0, 0, 0)
+        self._results_layout.addWidget(self._legend_widget, stretch=1)
+        self._scan_stack.addWidget(self._results_page)
+
+        _pie_basis = SettingsRepository().get("dashboard.pie_basis") or "used"
+        self._pie_widget.set_basis(_pie_basis)
+        (self._pie_total_btn if _pie_basis == "total" else self._pie_used_btn).setChecked(True)
+        self._pie_toggle_group.idToggled.connect(self._on_pie_basis_toggled)
+
+        layout.addWidget(self._scan_stack)
+
+        # ── SMART area ────────────────────────────────────────────────────────
+        smart_title = QLabel(strings.DASHBOARD_SMART_TITLE)
+        tf = smart_title.font()
+        tf.setBold(True)
+        smart_title.setFont(tf)
+        layout.addWidget(smart_title)
+
+        self._smart_container = QWidget()
+        self._smart_layout = QVBoxLayout(self._smart_container)
+        self._smart_layout.setSpacing(3)
+        self._smart_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._smart_container)
+
+        layout.addStretch()
+        self._refresh_badge()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._scan_started:
+            self._scan_started = True
+            self._start_scan()
+            self._start_smart()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.navigate_requested.emit(self._drive.mount_point)
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        _paint_card(self, self._hovered)
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+
+    def _refresh_badge(self) -> None:
+        label = self._drive.label
+        color = self._drive.color_hex
+        if label:
+            bg = color or _LABEL_PALETTE[-1]
+            fg = _contrast_color(bg)
+            self._badge.setText(label)
+            self._badge.setStyleSheet(
+                f"QLabel {{"
+                f"  background-color: {bg}; color: {fg};"
+                f"  border-radius: 8px; padding: 2px 8px; font-size: 11px;"
+                f"}}"
+            )
+        else:
+            self._badge.setText("")
+            self._badge.setStyleSheet("QLabel { background: transparent; }")
+
+    def cancel_scan(self) -> None:
+        """Drain _scan_thread and _smart_thread; safe to call before setParent(None)."""
+        if self._scan_worker is not None:
+            self._scan_worker.cancel()
+        for t in (self._scan_thread, self._smart_thread):
+            if t is not None:
+                try:
+                    if t.isRunning():
+                        t.quit()
+                        if not t.wait(3000):
+                            t.terminate()
+                            t.wait()
+                except RuntimeError:
+                    pass
+        self._scan_thread = None
+        self._scan_worker = None
+        self._smart_thread = None
+        self._smart_worker = None
+
+    def _on_pie_basis_toggled(self, btn_id: int, checked: bool) -> None:
+        if not checked:
+            return
+        basis = "total" if btn_id == 0 else "used"
+        self._pie_widget.set_basis(basis)
+        SettingsRepository().set("dashboard.pie_basis", basis)
+
+    def _show_smart_howto(self) -> None:
+        QMessageBox.information(
+            self,
+            strings.DASHBOARD_SMART_HOWTO_TITLE,
+            strings.DASHBOARD_SMART_HOWTO_MSG,
+        )
+
+    def _show_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        rename_action = menu.addAction(strings.ACTION_RENAME_LABEL)
+        rename_action.triggered.connect(self._open_label_modal)
+        menu.exec(self.mapToGlobal(pos))
+
+    def _open_label_modal(self) -> None:
+        modal = LabelModal(self._drive, parent=self)
+        modal.accepted.connect(self._refresh_badge)
+        modal.open()
+
+    # ── Disk scan ─────────────────────────────────────────────────────────────
+
+    def _start_scan(self) -> None:
+        self._scan_stack.setCurrentIndex(0)
+        self._scan_thread = QThread(parent=self)
+        self._scan_worker = DiskScanWorker(self._drive.mount_point)
+        self._scan_worker.moveToThread(self._scan_thread)
+        self._scan_thread.started.connect(self._scan_worker.run)
+        self._scan_worker.finished.connect(self._on_scan_finished)
+        self._scan_worker.failed.connect(self._on_scan_failed)
+        self._scan_worker.finished.connect(self._scan_thread.quit)
+        self._scan_worker.failed.connect(self._scan_thread.quit)
+        self._scan_thread.finished.connect(self._scan_worker.deleteLater)
+        self._scan_thread.finished.connect(self._scan_thread.deleteLater)
+        self._scan_thread.start()
+
+    def _on_scan_finished(self, data: dict) -> None:
+        total_bytes = self._drive.total_bytes or sum(data.values())
+        free_bytes = max(0, self._drive.free_bytes)
+
+        # Named categories from the scan (everything the scanner labeled)
+        named = {k: v for k, v in data.items()}
+        named_total = sum(named.values())
+
+        # "Other" = used space not covered by the scan (permissions, metadata, etc.)
+        used_bytes = total_bytes - free_bytes
+        other_bytes = max(0, used_bytes - named_total)
+
+        self._pie_widget.set_data(named, other_bytes, free_bytes, total_bytes)
+        self._build_legend(named, other_bytes, free_bytes)
+        self._scan_stack.setCurrentIndex(1)
+
+    def _on_scan_failed(self, error: str) -> None:
+        self._scan_stack.setCurrentIndex(1)
+
+    def _build_legend(
+        self, named: dict[str, int], other_bytes: int, free_bytes: int
+    ) -> None:
+        while self._legend_layout.count():
+            item = self._legend_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        segments = sorted(named.items(), key=lambda x: x[1], reverse=True)
+
+        # Other (uncategorized) second-to-last, Free Space always last
+        if other_bytes > 0:
+            segments.append(("Other", other_bytes))
+        segments.append((strings.DASHBOARD_FREE_SPACE, free_bytes))
+
+        for cat, val in segments:
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            if cat == strings.DASHBOARD_FREE_SPACE:
+                color = DISK_FREE_COLOR
+            else:
+                color = DISK_CATEGORIES.get(cat, "#566573")
+            swatch.setStyleSheet(
+                f"QLabel {{ background: {color}; border-radius: 2px; }}"
+            )
+            row.addWidget(swatch)
+
+            name_lbl = QLabel(cat)
+            row.addWidget(name_lbl, stretch=1)
+
+            size_lbl = QLabel(_fmt_bytes(val))
+            size_lbl.setStyleSheet("color: palette(mid);")
+            row.addWidget(size_lbl)
+
+            self._legend_layout.addWidget(row_widget)
+
+        self._legend_layout.addStretch()
+
+    # ── SMART ─────────────────────────────────────────────────────────────────
+
+    def _start_smart(self) -> None:
+        self._smart_thread = QThread(parent=self)
+        self._smart_worker = _SmartWorker(self._drive.mount_point)
+        self._smart_worker.moveToThread(self._smart_thread)
+        self._smart_thread.started.connect(self._smart_worker.run)
+        self._smart_worker.finished.connect(self._on_smart_finished)
+        self._smart_worker.unavailable.connect(self._on_smart_unavailable)
+        self._smart_worker.finished.connect(self._smart_thread.quit)
+        self._smart_worker.unavailable.connect(self._smart_thread.quit)
+        self._smart_thread.finished.connect(self._smart_worker.deleteLater)
+        self._smart_thread.finished.connect(self._smart_thread.deleteLater)
+        self._smart_thread.start()
+
+    def _on_smart_unavailable(self, reason: str) -> None:
+        while self._smart_layout.count():
+            item = self._smart_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        lbl = QLabel(reason)
+        lbl.setStyleSheet("color: palette(mid);")
+        self._smart_layout.addWidget(lbl)
+
+    def _on_smart_finished(self, data: SmartData) -> None:
+        while self._smart_layout.count():
+            item = self._smart_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if data.health == "permission_denied":
+            lbl = QLabel(strings.DASHBOARD_SMART_NO_PERM)
+            lbl.setStyleSheet("color: palette(mid);")
+            self._smart_layout.addWidget(lbl)
+            howto_btn = QPushButton(strings.DASHBOARD_SMART_HOWTO_BTN)
+            howto_btn.setFlat(True)
+            howto_btn.clicked.connect(self._show_smart_howto)
+            self._smart_layout.addWidget(howto_btn)
+            return
+
+        health_lbl = QLabel(f"{strings.DASHBOARD_SMART_TITLE}: {data.health}")
+        if data.health == strings.DASHBOARD_SMART_PASSED:
+            health_lbl.setStyleSheet("color: #27ae60;")
+        elif data.health == strings.DASHBOARD_SMART_FAILED:
+            health_lbl.setStyleSheet("color: #e74c3c;")
+        self._smart_layout.addWidget(health_lbl)
+
+        if data.power_on_hours is not None:
+            h = data.power_on_hours
+            y, rem = divmod(h, 8760)
+            m = rem // 730
+            poh_lbl = QLabel(
+                f"{strings.DASHBOARD_SMART_POH}: {h:,} hrs"
+                + (f" (≈ {y} yrs {m} months)" if y or m else "")
+            )
+            self._smart_layout.addWidget(poh_lbl)
+
+        if data.temperature_c is not None:
+            t = data.temperature_c
+            temp_lbl = QLabel(f"{strings.DASHBOARD_SMART_TEMP}: {t} °C")
+            if t > 60:
+                temp_lbl.setStyleSheet("color: #e74c3c;")
+            elif t > 50:
+                temp_lbl.setStyleSheet("color: #e67e22;")
+            self._smart_layout.addWidget(temp_lbl)
+
+        if data.reallocated_sectors and data.reallocated_sectors > 0:
+            realloc_lbl = QLabel(
+                strings.DASHBOARD_SMART_REALLOC.format(n=data.reallocated_sectors)
+            )
+            realloc_lbl.setStyleSheet("color: #e74c3c;")
+            self._smart_layout.addWidget(realloc_lbl)
+
+
+class _SmartWorker(QObject):
+    finished = pyqtSignal(SmartData)
+    unavailable = pyqtSignal(str)
+
+    def __init__(self, mount_point: str) -> None:
+        super().__init__()
+        self._mount_point = mount_point
+
+    def run(self) -> None:
+        backend = SmartBackend()
+        if not backend.is_available():
+            self.unavailable.emit(strings.DASHBOARD_SMART_UNAVAILABLE)
+            return
+        # Verify smartctl actually executes (not just present on PATH)
+        if not backend.check_runnable():
+            self.unavailable.emit(strings.DASHBOARD_SMART_UNAVAILABLE)
+            return
+        device = backend.device_for_mount(self._mount_point)
+        if device is None:
+            self.unavailable.emit(strings.DASHBOARD_SMART_UNAVAILABLE)
+            return
+        data = backend.get_data(device)
+        if data is None:
+            # Installed and runs, but couldn't read device — most likely permissions
+            self.finished.emit(SmartData(health="permission_denied"))
+            return
+        self.finished.emit(data)
+
+
 class _DriveLoader(QObject):
     loads_ready = pyqtSignal(list, list)  # (mounted, unmounted)
     load_failed = pyqtSignal(str)
@@ -553,14 +1061,19 @@ class DashboardView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._tiles: list[DriveTile] = []
+        self._tiles: list[DriveTile | AdvancedDriveTile] = []
         self._inactive_tiles: list[UnmountedDriveTile] = []
         self._col_count: int = 0
         self._initial_load_done: bool = False
 
+        self._settings = SettingsRepository()
+        self._view_mode = self._settings.get("dashboard.view_mode") or "simple"
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+
+        outer.addWidget(self._build_toolbar())
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
@@ -651,6 +1164,47 @@ class DashboardView(QWidget):
 
         self._start_load()
 
+    # ── Toolbar ───────────────────────────────────────────────────────────────
+
+    def _build_toolbar(self) -> QWidget:
+        toolbar = QWidget()
+        toolbar.setFixedHeight(36)
+        row = QHBoxLayout(toolbar)
+        row.setContentsMargins(12, 4, 12, 4)
+        row.setSpacing(4)
+
+        simple_btn = QPushButton(strings.DASHBOARD_TOGGLE_SIMPLE)
+        simple_btn.setCheckable(True)
+        advanced_btn = QPushButton(strings.DASHBOARD_TOGGLE_ADVANCED)
+        advanced_btn.setCheckable(True)
+
+        self._mode_group = QButtonGroup(toolbar)
+        self._mode_group.addButton(simple_btn, 0)
+        self._mode_group.addButton(advanced_btn, 1)
+        self._mode_group.setExclusive(True)
+
+        if self._view_mode == "advanced":
+            advanced_btn.setChecked(True)
+        else:
+            simple_btn.setChecked(True)
+
+        self._mode_group.idToggled.connect(self._on_mode_toggled)
+
+        row.addWidget(simple_btn)
+        row.addWidget(advanced_btn)
+        row.addStretch()
+        return toolbar
+
+    def _on_mode_toggled(self, btn_id: int, checked: bool) -> None:
+        if not checked:
+            return
+        mode = "simple" if btn_id == 0 else "advanced"
+        if mode == self._view_mode:
+            return
+        self._view_mode = mode
+        self._settings.set("dashboard.view_mode", mode)
+        self._reload()
+
     # ── Responsive layout ────────────────────────────────────────────────────
 
     def resizeEvent(self, event) -> None:
@@ -707,6 +1261,8 @@ class DashboardView(QWidget):
     def _reload(self) -> None:
         """Full teardown + re-load; called after a mount/unmount completes."""
         for tile in self._tiles:
+            if isinstance(tile, AdvancedDriveTile):
+                tile.cancel_scan()
             tile.setParent(None)
         for tile in self._inactive_tiles:
             tile.setParent(None)
@@ -727,8 +1283,11 @@ class DashboardView(QWidget):
         else:
             self._apply_diff(mounted, unmounted)
 
-    def _new_drive_tile(self, drive: Drive) -> DriveTile:
-        tile = DriveTile(drive)
+    def _new_drive_tile(self, drive: Drive) -> DriveTile | AdvancedDriveTile:
+        if self._view_mode == "advanced":
+            tile = AdvancedDriveTile(drive)
+        else:
+            tile = DriveTile(drive)
         tile.navigate_requested.connect(self.navigate_requested)
         return tile
 
@@ -782,6 +1341,8 @@ class DashboardView(QWidget):
                 tile = self._new_drive_tile(drive)
             new_tiles.append(tile)
         for tile in current_active.values():
+            if isinstance(tile, AdvancedDriveTile):
+                tile.cancel_scan()
             tile.setParent(None)
 
         # Reconcile inactive tiles

@@ -167,3 +167,227 @@ def test_wastebin_icon_switches_on_trash(tmp_path, monkeypatch):
     # non-empty trash → user-trash-full icon path
     monkeypatch.setattr(TB, "trash_count", lambda self: 3)
     sidebar.update_wastebin_icon()  # also must not raise
+
+
+# ── _TrashListWorker ─────────────────────────────────────────────────────────
+
+# ── _entry_size non-recursive ────────────────────────────────────────────────
+
+def test_entry_size_returns_minus_one_for_directory(tmp_path):
+    """Trashed directories must return -1 (never recursive-walk)."""
+    from backends.trash_backend import _entry_size
+    d = tmp_path / "big_dir"
+    d.mkdir()
+    (d / "file.txt").write_text("lots of data" * 1000)
+    assert _entry_size(d) == -1
+
+
+def test_entry_size_returns_stat_size_for_file(tmp_path):
+    """Trashed files return the exact stat().st_size byte count."""
+    from backends.trash_backend import _entry_size
+    f = tmp_path / "data.bin"
+    f.write_bytes(b"x" * 512)
+    assert _entry_size(f) == 512
+
+
+def test_list_trash_directory_size_is_minus_one(tmp_path, monkeypatch):
+    """list_trash() stores -1 for directory entries, not a recursive byte count."""
+    root = _make_trash(tmp_path)
+    trashed_dir = root / "files" / "mydir"
+    trashed_dir.mkdir()
+    (trashed_dir / "big.bin").write_bytes(b"0" * 8192)
+
+    info = root / "info" / "mydir.trashinfo"
+    info.write_text("[Trash Info]\nPath=/home/user/mydir\nDeletionDate=2024-01-01T00:00:00\n")
+
+    # Suppress per-mount scan so the snap PermissionError doesn't interfere
+    monkeypatch.setattr(TrashBackend, "_mount_points", lambda self: [])
+    backend = TrashBackend(trash_dir=root)
+    entries = backend.list_trash()
+
+    assert len(entries) == 1
+    assert entries[0].is_dir is True
+    assert entries[0].size == -1
+
+
+# ── _mount_points filtering ───────────────────────────────────────────────────
+
+def test_mount_points_excludes_snapd_ns(monkeypatch):
+    """/run/snapd/ns/... paths are excluded from _mount_points()."""
+    fake_mounts = (
+        "sysfs /sys sysfs rw 0 0\n"
+        "tmpfs /run tmpfs rw 0 0\n"
+        "ext4 /home ext4 rw 0 0\n"                        # should be kept
+        "fuse /run/snapd/ns/foo.mnt fuse rw 0 0\n"        # /run prefix → skip
+        "ext4 /snap/core20/1234 ext4 ro 0 0\n"            # /snap prefix → skip
+        "zfs /tank zfs rw 0 0\n"                          # real pool → keep
+    )
+    import io
+    monkeypatch.setattr("builtins.open",
+                        lambda path, *a, **kw: io.StringIO(fake_mounts)
+                        if "mounts" in str(path) else open(path, *a, **kw))
+    backend = TrashBackend()
+    mps = [str(p) for p in backend._mount_points()]
+    assert "/home" in mps
+    assert "/tank" in mps
+    assert not any("/snap" in m or "/run" in m for m in mps)
+
+
+def test_mount_points_excludes_run_prefix(monkeypatch):
+    """Any mount under /run is excluded."""
+    fake_mounts = "ext4 /run/user/1000 ext4 rw 0 0\n"
+    import io
+    monkeypatch.setattr("builtins.open",
+                        lambda path, *a, **kw: io.StringIO(fake_mounts)
+                        if "mounts" in str(path) else open(path, *a, **kw))
+    backend = TrashBackend()
+    assert backend._mount_points() == []
+
+
+# ── list_trash per-dir isolation ──────────────────────────────────────────────
+
+def test_list_trash_continues_after_permission_error(tmp_path, monkeypatch):
+    """A PermissionError on one per-mount info dir is skipped; main trash is read."""
+    root = _make_trash(tmp_path)
+    _add_entry(root, "file.txt", "hi", "/home/user/file.txt",
+               "2024-06-01T10:00:00")
+
+    bad_dir = tmp_path / "bad_info"
+    bad_dir.mkdir()
+
+    def fake_all_info_dirs(self):
+        return [bad_dir, root / "info"]
+
+    monkeypatch.setattr(TrashBackend, "_all_info_dirs", fake_all_info_dirs)
+
+    # Make bad_dir raise on glob
+    original_glob = __import__("backends.trash_backend", fromlist=["_safe_glob"])
+    import backends.trash_backend as tb_mod
+    original_safe_glob = tb_mod._safe_glob
+
+    def patched_safe_glob(directory, pattern):
+        if directory == bad_dir:
+            raise PermissionError("denied")
+        return original_safe_glob(directory, pattern)
+
+    monkeypatch.setattr(tb_mod, "_safe_glob", patched_safe_glob)
+
+    backend = TrashBackend(trash_dir=root)
+    entries = backend.list_trash()
+
+    assert len(entries) == 1
+    assert entries[0].name == "file.txt"
+
+
+def test_trash_list_worker_exists():
+    """_TrashListWorker is importable from backends.trash_backend."""
+    from backends.trash_backend import _TrashListWorker
+    assert _TrashListWorker is not None
+
+
+def test_trash_list_worker_emits_ready(monkeypatch):
+    """_TrashListWorker.run() calls list_trash() and emits ready with the result."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    import sys
+    _app = QApplication.instance() or QApplication(sys.argv)
+    from backends.trash_backend import _TrashListWorker, TrashBackend
+
+    fake_entries = ["entry_a", "entry_b"]
+    monkeypatch.setattr(TrashBackend, "list_trash", lambda self: fake_entries)
+
+    results: list = []
+    worker = _TrashListWorker()
+    worker.ready.connect(results.append)
+    worker.run()
+
+    assert results == [fake_entries]
+
+
+# ── _start_trash_op drains prior thread ──────────────────────────────────────
+
+def _make_fm(tmp_path, monkeypatch):
+    """Create a FileManagerView with DB patched to use tmp_path."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    import sys
+    _app = QApplication.instance() or QApplication(sys.argv)
+    import functools
+    from models.database import open_db
+
+    monkeypatch.setattr("backends.settings_backend.open_db",
+                        lambda _path=None: open_db(tmp_path / "data.db"))
+    monkeypatch.setattr("backends.recent_backend.open_db",
+                        functools.partial(open_db, tmp_path / "data.db"))
+    monkeypatch.setattr("backends.file_tags_backend.open_db",
+                        lambda _path=None: open_db(tmp_path / "data.db"))
+    from views.file_manager_view import FileManagerView
+    return FileManagerView()
+
+
+def test_start_trash_op_drains_prior_thread(tmp_path, monkeypatch):
+    """_start_trash_op() uses _drain_trash_thread(), not a bare quit()."""
+    from unittest.mock import MagicMock
+    fm = _make_fm(tmp_path, monkeypatch)
+    from PyQt6.QtCore import QThread
+
+    mock_thread = MagicMock(spec=QThread)
+    mock_thread.isRunning.return_value = True
+    mock_thread.wait.return_value = True
+    mock_worker = MagicMock()
+
+    fm._trash_thread = mock_thread
+    fm._trash_worker = mock_worker
+
+    # Prevent actually starting a real thread
+    monkeypatch.setattr(QThread, "start", lambda self: None)
+
+    fm._start_trash_op("empty", [])
+
+    # The old thread must have been drained (quit + wait), not just quit()
+    mock_thread.quit.assert_called_once()
+    mock_thread.wait.assert_called_once_with(3000)
+
+
+def test_trash_list_failed_shows_error_not_spinner(tmp_path, monkeypatch):
+    """When _TrashListWorker emits failed, TrashView shows an error — not 'Loading…'."""
+    from backends.trash_backend import TrashBackend
+    fm = _make_fm(tmp_path, monkeypatch)
+
+    from PyQt6.QtCore import QThread
+    monkeypatch.setattr(QThread, "start", lambda self: None)
+
+    # Make list_trash raise so the worker emits failed
+    monkeypatch.setattr(TrashBackend, "list_trash",
+                        lambda self: (_ for _ in ()).throw(RuntimeError("disk gone")))
+
+    fm._load_trash()
+    # Simulate the worker emitting failed directly (thread never started)
+    fm._on_trash_list_failed("disk gone")
+
+    top = fm._trash_view._tree.topLevelItem(0)
+    assert top is not None
+    text = top.text(0)
+    assert "disk gone" in text
+    assert "Loading" not in text
+
+
+def test_load_trash_uses_worker_not_direct_call(tmp_path, monkeypatch):
+    """_load_trash() must not call TrashBackend.list_trash() on the UI thread."""
+    from backends.trash_backend import TrashBackend
+    from unittest.mock import MagicMock
+
+    fm = _make_fm(tmp_path, monkeypatch)
+
+    # Prevent actual thread start
+    from PyQt6.QtCore import QThread
+    monkeypatch.setattr(QThread, "start", lambda self: None)
+
+    direct_calls: list = []
+    original = TrashBackend.list_trash
+    monkeypatch.setattr(TrashBackend, "list_trash",
+                        lambda self: direct_calls.append(1) or [])
+
+    fm._load_trash()
+
+    assert direct_calls == [], "_load_trash() must not call list_trash() synchronously"

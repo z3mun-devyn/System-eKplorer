@@ -93,10 +93,33 @@ class TrashView(QWidget):
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
+    def show_loading(self) -> None:
+        """Show a transient loading placeholder while the list worker runs."""
+        self._tree.clear()
+        self._entries = []
+        item = QTreeWidgetItem([strings.TRASH_LOADING, "", "", ""])
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._tree.addTopLevelItem(item)
+
+    def show_error(self, msg: str) -> None:
+        """Replace the loading placeholder with a readable error message."""
+        self._tree.clear()
+        self._entries = []
+        item = QTreeWidgetItem(
+            [strings.TRASH_LOAD_ERROR.format(msg=msg), "", "", ""])
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._tree.addTopLevelItem(item)
+
     def load(self, entries: list[TrashEntry]) -> None:
         """Populate the view.  Entries expected newest-first (from backend)."""
         self._tree.clear()
         self._entries = list(entries)
+
+        if not entries:
+            placeholder = QTreeWidgetItem([strings.TRASH_EMPTY_VIEW, "", "", ""])
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._tree.addTopLevelItem(placeholder)
+            return
 
         file_icon   = _file_icon()
         folder_icon = _folder_icon()
@@ -106,11 +129,16 @@ class TrashView(QWidget):
             item.setText(_COL_NAME,     entry.name)
             item.setText(_COL_ORIGINAL, str(entry.original_path.parent))
             item.setText(_COL_DATE,     entry.deletion_date.strftime("%Y-%m-%d  %H:%M"))
-            item.setText(_COL_SIZE,     fmt_size(entry.size) if entry.size else "—")
+            # size == -1 means directory (no recursive sizing); render as "—"
+            item.setText(_COL_SIZE,     fmt_size(entry.size) if entry.size >= 0 else "—")
             item.setData(0, _ENTRY_ROLE, i)
             item.setTextAlignment(_COL_SIZE, Qt.AlignmentFlag.AlignRight)
             item.setIcon(_COL_NAME, folder_icon if entry.is_dir else file_icon)
             self._tree.addTopLevelItem(item)
+
+    def all_entries(self) -> list[TrashEntry]:
+        """Return the currently displayed entries (from the last load() call)."""
+        return list(self._entries)
 
     def get_selected_entries(self) -> list[TrashEntry]:
         result: list[TrashEntry] = []

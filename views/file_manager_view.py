@@ -32,7 +32,7 @@ from backends.file_ops_backend import (
 from backends.file_tags_backend import FileTagRepository
 from backends.recent_backend import RecentPathsBackend
 from backends.settings_backend import SettingsRepository
-from backends.trash_backend import TrashBackend, _TrashWorker
+from backends.trash_backend import TrashBackend, _TrashListWorker, _TrashWorker
 from models.file_entry import FileEntry, fmt_size
 from models.storage import Drive
 from views.address_bar import AddressBar
@@ -180,6 +180,8 @@ class FileManagerView(QWidget):
         self._ops_worker: _FileOpsWorker | None = None
         self._trash_thread: QThread | None = None
         self._trash_worker: _TrashWorker | None = None
+        self._trash_list_thread: QThread | None = None
+        self._trash_list_worker = None
         self._in_trash_mode      = False
         self._last_op_target_dir: Path | None = None
 
@@ -568,7 +570,15 @@ class FileManagerView(QWidget):
 
     # ── Signal handlers ───────────────────────────────────────────────────────
 
+    def closeEvent(self, event) -> None:
+        self._properties_panel.shutdown()
+        self._drain_trash_thread()
+        self._drain_trash_list_thread()
+        super().closeEvent(event)
+
     def _on_dual_pane_toggled(self, enabled: bool) -> None:
+        if not enabled:
+            self._properties_panel.shutdown()
         self._right_pane.setVisible(enabled)
         if enabled:
             total = self._splitter.width()
@@ -578,6 +588,8 @@ class FileManagerView(QWidget):
         self._settings.set(strings.FM_SETTING_DUAL_PANE, "1" if enabled else "0")
 
     def _on_panel_selected(self, idx: int) -> None:
+        if idx != _RIGHT_PROPERTIES:
+            self._properties_panel.shutdown()
         self._right_stack.setCurrentIndex(idx)
         self._settings.set(
             strings.FM_SETTING_RIGHT_PANEL, _IDX_TO_PANEL.get(idx, "browser"))
@@ -1064,6 +1076,7 @@ class FileManagerView(QWidget):
     # ── Trash mode ────────────────────────────────────────────────────────────
 
     def _enter_trash_mode(self) -> None:
+        self._properties_panel.shutdown()
         self._in_trash_mode = True
         self._left_stack.setCurrentIndex(1)
         self._address_bar.set_path(strings.TRASH_ADDRESS_LABEL)
@@ -1079,9 +1092,65 @@ class FileManagerView(QWidget):
         self._address_bar.set_path(self._current_path)
         self._update_nav_buttons()
 
+    def _drain_trash_thread(self) -> None:
+        t = self._trash_thread
+        if t is not None:
+            try:
+                if t.isRunning():
+                    t.quit()
+                    if not t.wait(3000):
+                        t.terminate()
+                        t.wait()
+            except RuntimeError:
+                pass
+        self._trash_thread = None
+        self._trash_worker = None
+
+    def _drain_trash_list_thread(self) -> None:
+        t = self._trash_list_thread
+        if t is not None:
+            try:
+                if t.isRunning():
+                    t.quit()
+                    if not t.wait(3000):
+                        t.terminate()
+                        t.wait()
+            except RuntimeError:
+                pass
+        self._trash_list_thread = None
+        self._trash_list_worker = None
+
     def _load_trash(self) -> None:
-        entries = TrashBackend().list_trash()
+        # Guard re-entrancy: if a list is already in flight, skip
+        try:
+            if self._trash_list_thread is not None and self._trash_list_thread.isRunning():
+                return
+        except RuntimeError:
+            pass
+
+        self._trash_view.show_loading()
+
+        self._trash_list_thread = QThread(parent=self)
+        self._trash_list_worker = _TrashListWorker()
+        self._trash_list_worker.moveToThread(self._trash_list_thread)
+        self._trash_list_thread.started.connect(self._trash_list_worker.run)
+        self._trash_list_worker.ready.connect(self._on_trash_list_ready)
+        self._trash_list_worker.ready.connect(self._trash_list_thread.quit)
+        self._trash_list_worker.failed.connect(self._on_trash_list_failed)
+        self._trash_list_worker.failed.connect(self._trash_list_thread.quit)
+        self._trash_list_thread.finished.connect(self._trash_list_worker.deleteLater)
+        self._trash_list_thread.finished.connect(self._trash_list_thread.deleteLater)
+        self._trash_list_thread.start()
+
+    def _on_trash_list_ready(self, entries: list) -> None:
+        self._trash_list_thread = None
+        self._trash_list_worker = None
         self._trash_view.load(entries)
+
+    def _on_trash_list_failed(self, msg: str) -> None:
+        self._trash_list_thread = None
+        self._trash_list_worker = None
+        self._trash_view.show_error(msg)
 
     def _handle_back(self) -> None:
         if self._in_trash_mode:
@@ -1108,15 +1177,14 @@ class FileManagerView(QWidget):
 
     def _on_wastebin_action(self, action: str) -> None:
         if action == "restore_all":
-            entries = TrashBackend().list_trash()
+            entries = self._trash_view.all_entries()
             if entries:
                 self._start_trash_op("restore", entries)
         elif action == "empty":
             self._confirm_and_empty_trash()
 
     def _confirm_and_empty_trash(self) -> None:
-        entries = TrashBackend().list_trash()
-        n = len(entries)
+        n = len(self._trash_view.all_entries())
         if n == 0:
             return
         msg = strings.TRASH_EMPTY_MSG.format(n=n)
@@ -1158,8 +1226,7 @@ class FileManagerView(QWidget):
         }.get(op, op)
         self._action_panel.start_action(desc)
 
-        if self._trash_thread and self._trash_thread.isRunning():
-            self._trash_thread.quit()
+        self._drain_trash_thread()
 
         self._trash_thread = QThread(parent=self)
         self._trash_worker = _TrashWorker(op, entries)
@@ -1171,6 +1238,7 @@ class FileManagerView(QWidget):
         self._trash_worker.succeeded.connect(self._trash_thread.quit)
         self._trash_worker.failed.connect(self._trash_thread.quit)
         self._trash_thread.finished.connect(self._trash_worker.deleteLater)
+        self._trash_thread.finished.connect(self._trash_thread.deleteLater)
         self._trash_thread.start()
 
     def _on_trash_succeeded(self, message: str) -> None:

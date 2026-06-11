@@ -1550,3 +1550,318 @@ _startup_tab_index (7): all 5 tabs map correctly; unknown key defaults to 0; _ST
 Dialog reads settings (7): startup tab combo; fm show_hidden checkbox true/false; fm view mode icons; fm address bar breadcrumb; clipboard max entries; default 10 when missing.
 OK writes / Cancel does not (7): startup tab; fm view mode; fm show_hidden; fm address bar; clipboard max entries; cancel doesn't write fm view; cancel doesn't write startup tab.
 System page (5): label "is default"; label "not default"; set btn disabled when default; set btn enabled when not; not default when query returns None.
+
+## Dashboard Advanced Mode
+
+**Toggle:** Simple/Advanced `QPushButton` (checkable) in a `QButtonGroup` above the scroll area. `idToggled` writes `dashboard.view_mode` ("simple"/"advanced") to settings and calls `_reload()`. Mode persists across launches.
+
+**`AdvancedDriveTile`** (`views/dashboard_view.py`): same header as `DriveTile` (name, badge, device/fs_type, used/free/total) plus a rescan button. Body is a `QStackedWidget`: page 0 = indeterminate `QProgressBar` + "Scanning…"; page 1 = `_SegmentedPieWidget` + legend. SMART section below. `showEvent` + `_scan_started` guard prevents double-start.
+
+**`_SegmentedPieWidget`**: custom `QWidget`, 160×160. `paintEvent` draws pie slices via `drawPie`, then punches a 50% donut hole with `drawEllipse`. Centre shows used %. Unaccounted space shown as grey `_free` slice. Segments sorted largest-first, "Other" always last.
+
+**Legend:** `QVBoxLayout` of rows per category (colored swatch + name + size). Built by `_build_legend()`, cleared and rebuilt on each scan result.
+
+**`DiskScanBackend`** (`backends/disk_scan_backend.py`): `DISK_CATEGORIES` dict (9 categories with hex colors — data-viz constants, NOT theme.py). `_categorize(path, filename)`: extension check runs BEFORE MIME so `.py`/`.js` (MIME `text/x-python` etc.) aren't swallowed by the `text/*` Documents catch-all. Path prefix → extension → MIME → "Other". Skips `/proc` etc. under root. Progress callback every 500 files.
+
+**`SmartBackend`** (`backends/smart_backend.py`): `SmartData` dataclass (health, power_on_hours, temperature_c, reallocated_sectors). `device_for_mount()` parses `/proc/mounts` (injectable via `mounts_path=` for tests), strips partition suffix with `_strip_partition()` (`nvme`/`mmcblk` → `p\d+$`, else `\d+$`). `get_data()` calls `smartctl -iHA`; returncode 0 or 4 = OK; returncode 1 + "Permission denied" in stderr → `SmartData(health="Permission denied")`; other non-zero → None.
+
+**Configure dialog:** Dashboard page added at index 2 (Clipboard→3, System→4, About→5). Two `QRadioButton` (`_dash_simple_rb` / `_dash_advanced_rb`) in a `QButtonGroup`. Setting key: `dashboard.view_mode`.
+
+### Tests: 786/786 (+52: +24 disk_scan, +23 smart, +5 configure_dialog dashboard page)
+
+## BUG FIX: FileView context menu on right-click (post-Dashboard milestone)
+
+**Root cause:** `contextMenuRequested` fires before Qt updates `selectedIndexes()` from the right-click, so `_get_selected_entries()` returned empty and the code fell through to the empty-area menu branch.
+
+**Fix** (`views/file_view.py`, `_on_context_menu`): call `sender.indexAt(pos)` to get the item directly from mouse position. If valid and not already selected (`sel_model.isSelected(idx)` is False), force-select with `sel_model.select(idx, ClearAndSelect | Rows)` before calling `_get_selected_entries()`. Multi-selections where the right-clicked item is already selected are preserved unchanged. `QItemSelectionModel` added to imports.
+
+### Tests: 786/786 (no change — fix is a pure event-ordering correction)
+
+## Dashboard Advanced: three visual fixes
+
+### Part 1 — System & OS color
+`DISK_CATEGORIES["System & OS"]` changed from `#7F8C8D` (grey, indistinguishable from "Other") to `#1ABC9C` (teal/cyan). Change is in `backends/disk_scan_backend.py`.
+
+### Part 2 — Free Space / Other separation
+`_SegmentedPieWidget.set_data()` now takes four args: `category_bytes, other_bytes, free_bytes, total_bytes`. The old single-dict + total interface is gone.
+
+`_on_scan_finished` computes the correct values from drive data (authoritative, not from scan totals):
+- `free_bytes = drive.free_bytes` (from df — no scan needed)
+- `other_bytes = max(0, used_bytes - sum(all scanned bytes))` — unscanned used space (permissions, metadata, filesystem overhead)
+- Named categories are all scan output passed as-is
+
+Pie renders: named categories (sorted largest-first) → "Other" (if > 0) → "Free Space" (always last, color `#2C3E50` very dark near-black). "Other" color stays `#566573`. Center % text derives from `total - free / total`.
+
+Legend mirrors pie order. "Free Space" always last; "Other" shown only if > 0.
+
+`DASHBOARD_FREE_SPACE = "Free Space"` added to `strings.py`.
+
+### Part 3 — SMART permission detection
+`SmartBackend.check_runnable()` added: runs `smartctl --version`, returns True only if returncode == 0. `_SmartWorker.run()` calls this after `is_available()` — if `--version` fails the tile shows "Install smartmontools…"; if it passes but `get_data()` returns None the tile shows the permissions message (via `SmartData(health="permission_denied")`).
+
+`get_data()` permission detection widened: returncode in (1, 2) OR "Permission denied" in stderr/stdout → `SmartData(health="permission_denied")`. Other non-(0,4) returncodes → None. Health sentinel changed from `"Permission denied"` to `"permission_denied"` (lowercase, avoids accidental match against display strings).
+
+`_on_smart_finished` checks `health == "permission_denied"` (was `"Permission denied"`).
+
+### Tests: 791/791 (+5 smart: returncode-2→permission_denied, stderr-any-code→permission_denied, check_runnable ×3)
+
+## BUG FIX (second pass): file context menu — Cause C confirmed, coordinate space
+
+**Diagnosis:** Two compounding bugs were diagnosed via code analysis of Qt6 internals:
+
+1. **Cause A (previously known):** `QAbstractItemView::mousePressEvent` returns immediately for `event->button() != Qt::LeftButton`, so a right-click never commits a selection. At the moment `customContextMenuRequested` fires, `selectedRows()` is always `[]`.
+
+2. **Cause C (root cause of persistent failure):** `customContextMenuRequested(pos)` provides `pos` in **widget** coordinates, not viewport coordinates. This is because `QAbstractScrollArea::viewportEvent` converts the `QContextMenuEvent` from viewport→widget coordinates before forwarding it to `QAbstractItemView::contextMenuEvent`, which then emits the signal with `event->pos()` (widget coords). But `QAbstractItemView::indexAt(point)` expects **viewport** coordinates. For `QTreeView` the header bar (≈28 px) creates the gap: `indexAt(widget_pos)` looks 28 px below the actual click. For clicks near the bottom of a directory listing, `widget_y + 0` exceeds the last visible viewport row → `indexAt` returns **invalid** → `entries = []` → empty-area menu every time.
+
+**First-pass fix failed because:** it force-selected via `indexAt(pos)` which still used the wrong (widget) coordinates. The force-select went to the wrong row (or was skipped entirely on invalid), so the symptom persisted.
+
+**Fix** (`views/file_view.py`, `_on_context_menu`):
+- Compute `viewport_pos = sender.viewport().mapFrom(sender, pos)` — converts widget coords → viewport coords.
+- Use `idx = sender.indexAt(viewport_pos)` for both the empty-area branch decision and the force-select.
+- Change `menu.exec(sender.viewport().mapToGlobal(pos))` → `menu.exec(sender.mapToGlobal(pos))` — `pos` is widget-relative, so `sender.mapToGlobal` is the correct conversion (the previous call was also offset by the header).
+
+**Diagnostic predicted output** (right-clicking row 0 with 28 px header):
+```
+idx_widget valid=True row=1    # off by one — looked 28 px below cursor
+idx_viewport valid=True row=0  # correct item
+selectedRows=[]                # right-click never updates selection
+```
+For a click near the bottom: `idx_widget` would be **invalid** (past last row) → empty menu.
+
+### Tests: 791/791 (no change in count — fix is a coordinate mapping correction)
+
+## FINAL FIX PASS (4 parts)
+
+### Part 1 — Context menu: DnD eventFilter pass-through (third pass)
+
+**Root cause (confirmed):** The DnD milestone installed an `eventFilter` on both `_tree.viewport()` and `_list.viewport()` to intercept drag/scroll events. This filter was consuming `QEvent.Type.ContextMenu` before Qt could route it through `viewportEvent()` → `contextMenuEvent()` → `customContextMenuRequested`. Result: context menu never fired in the Advanced/Drag-ready code path.
+
+**Fix — `eventFilter()` (`views/file_view.py`):**
+```python
+if event.type() == QEvent.Type.ContextMenu:
+    return False  # never consume — let Qt route normally
+```
+Added at the very top of `eventFilter`, before all other checks.
+
+**Fix — `_on_context_menu()` (`views/file_view.py`):**
+`customContextMenuRequested(pos)` emits `pos` in **viewport** coordinates for `QAbstractScrollArea` subclasses. The previous two passes mapped to widget coords and then back; this pass removes all `mapFrom` calls:
+- `idx = sender.indexAt(pos)` — direct viewport coords, correct.
+- Added `entry = self._model.data(src, _ENTRY_ROLE)` validity check (guards against index with no backing entry).
+- `menu.exec(sender.viewport().mapToGlobal(pos))` — viewport pos → global screen coords.
+
+**Note:** Cause C (widget vs viewport coordinate mismatch, diagnosed in the second pass) was fixed in that pass via `viewport().mapFrom(sender, pos)`. This pass supersedes it: since the eventFilter now passes ContextMenu through, Qt routes the event via `QContextMenuEvent` with viewport coordinates natively — no `mapFrom` needed at all.
+
+### Part 2 — SMART without elevation + Configure → System SMART Access section
+
+**Problem:** When smartctl fails with a permissions error, the tile showed a static label with no actionable guidance. Users on standard desktop installs are not in the `disk` group and have no path forward.
+
+**Dashboard fix (`views/dashboard_view.py`):**
+`_on_smart_finished()` permission_denied branch now adds a "How to enable" flat `QPushButton` below the label. Clicking it calls `_show_smart_howto()` which opens a `QMessageBox.information` explaining `sudo usermod -a -G disk $USER` and pointing to Configure → System.
+
+**Configure → System SMART Access section (`views/configure_dialog.py`):**
+`_build_system_page()` extended with a new "SMART Drive Access" group below the default FM section:
+- Description label (`CONFIGURE_SYS_SMART_LABEL`).
+- Read-only command row with a "Copy command" button that calls `QApplication.clipboard().setText(strings.CONFIGURE_SYS_SMART_CMD)`.
+- `self._smart_group_status` QLabel, populated by `_refresh_smart_group_status()`.
+- `_refresh_smart_group_status()` checks `grp.getgrnam("disk").gr_mem` against `os.getlogin()`:
+  - In group → green `✓` label (`color: #27ae60`).
+  - Not in group → muted `✗` label (`color: palette(mid)`).
+  - `KeyError`/`OSError` → treated as not in group.
+
+**New strings (`strings.py`):**
+`CONFIGURE_SYS_SMART_TITLE`, `CONFIGURE_SYS_SMART_LABEL`, `CONFIGURE_SYS_SMART_CMD`,
+`CONFIGURE_SYS_SMART_COPY_CMD`, `CONFIGURE_SYS_SMART_IN_GROUP`, `CONFIGURE_SYS_SMART_NOT_IN_GROUP`,
+`DASHBOARD_SMART_NO_PERM` (replaces previous inline string), `DASHBOARD_SMART_HOWTO_BTN`,
+`DASHBOARD_SMART_HOWTO_TITLE`, `DASHBOARD_SMART_HOWTO_MSG`.
+
+### Part 3 — Properties panel crash: GC-safe ref store (definitive fix)
+
+**Root cause recap:** GC collecting a `QThread` wrapper while the thread is still running causes `SIGABRT`. The individual `_ow_thread` / `_cs_thread` / `_chmod_thread` attrs were set to `None` too early (by `_cancel_workers()` clearing them before `wait()` confirmed the thread had stopped), allowing GC to collect the Python wrapper while the C++ thread was still alive.
+
+**Three-layer fix (`views/properties_panel.py`):**
+
+Layer 1 — unified GC-safe ref store:
+```python
+self._workers: list[tuple[QThread, QObject]] = []
+```
+Every worker spawn (OW, CS, chmod) appends `(thread, worker)` to this list immediately after `moveToThread`.
+
+Layer 2 — `_cancel_workers()` iterates the list:
+```python
+for thread, _worker in self._workers:
+    thread.quit()
+    thread.wait(200)   # 200ms — don't block UI, enough for subprocess
+self._workers.clear()  # clear AFTER all wait() calls — GC cannot collect until here
+```
+Signal disconnection (try/except RuntimeError) runs BEFORE the loop so stale callbacks never fire during the overlap window. All `_*_thread` / `_*_worker` attrs set to `None` after `_workers.clear()`.
+
+Layer 3 — generation counter (already implemented; wait increased from 100ms → 200ms to match subprocess characteristics of `_OpenWithLoader`).
+
+**Note on `show_file()`:** The spec said to also call `_cancel_workers()` at the top of `show_file()`, but `populate_general()` starts workers and then calls `show_file()`. Adding cancel there would kill workers that were just started. Resolution: `_cancel_workers()` is called only at the top of `populate_general()` and `show_placeholder()`.
+
+### Part 4 — Pie scan cross-mount fix + color palette
+
+**Sub-part A — Root cause of inflated category totals:**
+
+`os.walk()` naturally descends into ALL subdirectories including those on different filesystems (btrfs subvolumes, ZFS pools, bind mounts). A user with a 24 GB drive could see "Archives: 230 GB" because the walk descended into a large mounted volume nested inside the mount point.
+
+**Fix (`backends/disk_scan_backend.py`):**
+```python
+root_dev = os.stat(mount_point).st_dev
+# In os.walk topdown=True loop:
+kept = []
+for d in dirnames:
+    try:
+        if os.stat(os.path.join(dirpath, d)).st_dev == root_dev:
+            kept.append(d)
+    except OSError:
+        pass
+dirnames[:] = kept   # in-place mutation — os.walk respects this in topdown=True mode
+```
+`root_dev` is captured once before the walk. `OSError` on a subdir → silently skip it (broken symlinks, PermissionError).
+
+**Sub-part B — Color palette:**
+- `Archives`: `#16A085` → `#FF1493` (hot pink — visually distinct from Documents and System & OS)
+- `Free Space` (both `_on_scan_finished` occurrences): `#2C3E50` → `#1C2833` (very dark near-black — communicates "empty" visually)
+
+### Tests: 798/798 (+7 new)
+
+New tests:
+- `tests/test_m10c_file_view.py`: `test_event_filter_passes_context_menu_events` (eventFilter returns False for ContextMenu); `test_event_filter_consumes_ctrl_scroll` (returns True for Ctrl+Wheel).
+- `tests/test_disk_scan_backend.py`: `test_scan_prunes_dirs_on_different_device` (foreign dir with `st_dev = root_dev + 999` yields 0 Videos, only local .py counted); fixed `test_scan_skips_proc_under_root` (added `st_dev = 1` to fake_stat's `S` class — needed by new `root_dev = os.stat(mount_point).st_dev` call).
+- `tests/test_properties_panel_crash_fix.py`: `test_cancel_workers_calls_quit_on_running_thread` updated (now appends to `_workers` list, `wait(200)`); `test_cancel_workers_clears_workers_list`; `test_workers_list_populated_after_populate`; `test_generation_counter_discards_stale_chmod_result`.
+
+---
+
+---
+
+## QThread teardown — shared pattern (applied everywhere)
+
+```
+if thread is not None:
+    try:
+        if thread.isRunning():
+            thread.quit()
+            if not thread.wait(3000):
+                thread.terminate()
+                thread.wait()
+    except RuntimeError:
+        pass   # C++ object already gone
+```
+Always connect BOTH `thread.finished → worker.deleteLater` AND
+`thread.finished → thread.deleteLater`. Keep a Python ref until `wait()` returns.
+
+### Fix 1 — Wastebin random crash (file_manager_view.py `_start_trash_op`)
+**Root cause:** Old `_trash_thread` was `quit()`-ed without `wait()` and
+reassigned immediately, orphaning a possibly-running C++ thread. Also
+`thread.deleteLater` was never connected, so the C++ thread object leaked.
+**Fix:** Added `_drain_trash_thread()` using the shared pattern. Added
+`thread.finished → thread.deleteLater`. Added `closeEvent` on `FileManagerView`
+that drains both `_trash_thread` and `_trash_list_thread`.
+
+### Wastebin failed on unreadable per-mount trash dirs (trash_backend.py)
+**Root cause:** `_mount_points()` included snapd/runtime mounts like `/run/snapd/ns/snapd-desktop-integration.mnt`. `list_trash()` then tried to stat `.Trash-1000/info` on those paths, hit `PermissionError`, and aborted the entire listing — the user's real `~/.local/share/Trash` was never read.
+
+**Three-layer fix:**
+1. `_mount_points()` now skips any mount whose path starts with `/run`, `/proc`, `/sys`, `/dev`, `/snap`, `/var/lib/snapd`, `/var/lib/docker`, or contains `/snapd/ns/` or `/.mnt`. These paths never hold user trash.
+2. `_all_info_dirs()` wraps each per-mount `td.exists()` check in `try/except (PermissionError, OSError)` — a single bad mount can't abort the loop.
+3. `list_trash()` wraps each `info_dir` iteration in its own `try/except (PermissionError, OSError)` — one unreadable directory is skipped, not fatal. Main `~/.local/share/Trash` is always first in the list and therefore always read.
+
+**Side effect:** The path-prefix filter eliminated the `/run/snapd/...` check that was causing 5 pre-existing test failures — all 829 tests now pass.
+
+---
+
+### Wastebin error path left "Loading…" stuck (file_manager_view.py + trash_view.py)
+**Root cause:** `_TrashListWorker.failed` was connected only to `thread.quit`. No UI slot cleared the loading state, so any exception in `list_trash()` left TrashView permanently stuck showing "Loading…".
+**Fix:** Added `_on_trash_list_failed(msg)` slot that clears thread/worker refs and calls `trash_view.show_error(msg)`. Connected `failed → _on_trash_list_failed` (alongside the existing `failed → thread.quit`). Added `TrashView.show_error(str)` that replaces the spinner with "Couldn't read the Wastebin: \<msg\>".
+
+---
+
+### Wastebin infinite "Loading…" — diagnosed and fixed
+
+**Diagnosis:**
+- `_load_trash` was already async (routed through `_TrashListWorker`). The threading was correct.
+- **Primary hang:** `_entry_size()` in `trash_backend.py` called `path.rglob("*")` to recursively stat every file in every trashed directory. Called per entry inside the worker — on a ZFS pool with large trashed directories this takes minutes to hours, keeping "Loading…" forever.
+- **Secondary:** `load([])` left a blank tree instead of "Wastebin is empty". Two synchronous `list_trash()` calls survived on the UI thread in `_on_wastebin_action` and `_confirm_and_empty_trash`.
+
+**Fixes:**
+- `_entry_size()` now returns `-1` for directories (no rglob). Files keep `stat().st_size`.
+- `TrashEntry.size == -1` renders as "—" in TrashView. `load([])` shows "Wastebin is empty" placeholder.
+- `_on_wastebin_action("restore_all")` and `_confirm_and_empty_trash` now use `self._trash_view.all_entries()` (cached from last load) instead of calling `list_trash()` synchronously.
+
+---
+
+### Fix 2 — Wastebin click freeze (file_manager_view.py `_load_trash`)
+**Root cause:** `list_trash()` ran synchronously on the UI thread — on large/slow
+trash directories this stalled the compositor enough to kill the app.
+**Fix:** Added `_TrashListWorker` in `backends/trash_backend.py`. `_load_trash()`
+now starts a thread, shows a "Loading…" state in `TrashView`, and delivers entries
+via `_on_trash_list_ready()`. Re-entrancy guard prevents double-starts.
+
+### Fix 3 — Simple-during-scan crash (dashboard_view.py `_reload` + AdvancedDriveTile)
+**Root cause:** `_reload()` called `tile.setParent(None)` while `_scan_thread` was
+still walking the filesystem → orphaned running QThread → SIGABRT.
+**Fix:** Added cooperative `_cancelled` flag + `cancel_check` parameter to
+`DiskScanBackend.scan()` and `DiskScanWorker` (checks per directory in os.walk).
+Added `cancel_scan()` to `AdvancedDriveTile` that cancels the worker and drains
+both `_scan_thread` and `_smart_thread` via the shared pattern. `_reload()` and
+`_apply_diff()` now call `cancel_scan()` before `setParent(None)`. Added
+`thread.deleteLater` connections that were missing from `_start_scan()`/`_start_smart()`.
+
+### Fix 4 — Properties crash on navigation (properties_panel.py + file_manager_view.py)
+**Root cause:** `_cancel_workers()` was only called from `populate_general()` and
+`show_placeholder()`, not when the FM tore down or replaced the right pane.
+Properties workers survived pane switches and got orphaned.
+**Fix:** Added `PropertiesPanel.shutdown()` (public wrapper around `_cancel_workers()`).
+Called on: entering trash mode (`_enter_trash_mode`), switching away from Properties
+(`_on_panel_selected`), disabling dual pane (`_on_dual_pane_toggled`), and on
+`FileManagerView.closeEvent`.
+
+### Fix 5 — Terminal copy/paste (terminal_view.py)
+**Root cause:** No copy/paste bindings existed; no context menu. Ctrl+C correctly
+sends \\x03 (SIGINT) and must not be remapped.
+**Fix:** In `keyPressEvent`, Ctrl+Shift+C copies selection to clipboard; Ctrl+Shift+V
+pastes clipboard text to the PTY. Both are checked BEFORE the Ctrl+letter → \\x03
+block so Ctrl+C is unaffected. Added right-click context menu (Copy, Paste, Select All,
+Clear) with copy/paste enabled only when there is a selection / clipboard content.
+
+---
+
+## Surgical fix pass — root causes documented
+
+### Fix 1 — Context menu empty on files (views/file_view.py)
+**Root cause:** `QTreeView` defaults to `SelectItems`, so right-click selects a single
+cell. `_get_selected_entries()` calls `selectedRows()`, which returns nothing when only
+a cell is selected → menu falls through to the empty-area branch.
+**Fix:** `setSelectionBehavior(SelectRows)` added immediately after `setSelectionMode`.
+`_on_context_menu` selection guard switched from `isSelected(idx)` (cell-level) to
+comparing source-model row indexes via `selectedRows()` so any column click works.
+
+### Fix 2 — Properties crash on rapid file clicks (views/properties_panel.py)
+**Root cause A:** `deleteLater` fires when a worker thread finishes normally, destroying
+the C++ `QThread` object, but the tuple stays in `self._workers`. The next call to
+`_cancel_workers` calls `thread.quit()` on a dead object → `RuntimeError` → crash.
+**Root cause B:** `thread.wait(200)` is too short for `_OpenWithLoader` which shells out
+to `xdg-mime/gio`. Wait times out, `_workers.clear()` drops the last reference, GC
+destroys a still-running C++ QThread → SIGABRT.
+**Fix:** `_cancel_workers` now checks `thread.isRunning()` under a `RuntimeError` guard,
+uses `wait(3000)` with a `terminate()+wait()` fallback. Redundant pre-quit blocks in
+`_on_chmod_clicked` and `_on_compute_checksums` removed (double-quit on possibly-dead objects).
+
+### Fix 3 — SMART permission guidance (strings.py, views/configure_dialog.py)
+**Root cause:** Dashboard showed a bare message with a how-to popup; Configure → System
+already has the SMART disk-group UI but was never pointed to from the dashboard.
+Also, `os.getlogin()` in `_refresh_smart_group_status` can raise `OSError` in
+non-terminal environments.
+**Fix:** `DASHBOARD_SMART_NO_PERM` string updated to direct users to Configure → System.
+`os.getlogin()` replaced with `getpass.getuser()` (safe in all launch contexts).
+
+### Fix 4 — Pie "only Archives" on near-empty drives (views/dashboard_view.py)
+**Root cause:** On near-empty multi-TB drives (~88% free), the free wedge is painted in
+`#1C2833` which is near-invisible on dark themes, making tiny category segments look like
+"only one color". Segments are mathematically present but visually swamped by the free wedge.
+**Fix:** Added "Total | Used" toggle (persisted as `dashboard.pie_basis`; default "used").
+In "used" mode `_SegmentedPieWidget` divides by `total - free` and omits the free wedge
+entirely — category proportions fill the full ring. In "total" mode free-space color
+changed from `#1C2833` to `DISK_FREE_COLOR = "#34495E"` (visible slate).
+`DISK_FREE_COLOR` defined in `disk_scan_backend.py` as the single source of truth.

@@ -873,3 +873,39 @@ def test_icon_provider_fallback_non_null(tmp_path, monkeypatch):
     f = tmp_path / "script.py"; f.write_text("x = 1")
     icon = _entry_icon(_make_entry(f))
     assert not icon.isNull()
+
+
+def test_event_filter_passes_context_menu_events():
+    """eventFilter returns False for ContextMenu events — never consumes them."""
+    from PyQt6.QtCore import QEvent
+    from unittest.mock import MagicMock
+    _app()
+    fv = _make_file_view()
+    event = MagicMock()
+    event.type.return_value = QEvent.Type.ContextMenu
+    result = fv.eventFilter(fv._tree.viewport(), event)
+    assert result is False
+
+
+def test_event_filter_consumes_ctrl_scroll():
+    """eventFilter returns True for Ctrl+Wheel events (zoom)."""
+    from PyQt6.QtCore import QEvent, QPoint, Qt
+    from unittest.mock import MagicMock
+    _app()
+    fv = _make_file_view()
+    event = MagicMock()
+    event.type.return_value = QEvent.Type.Wheel
+    event.modifiers.return_value = Qt.KeyboardModifier.ControlModifier
+    event.angleDelta.return_value = QPoint(0, 120)
+    result = fv.eventFilter(fv._tree.viewport(), event)
+    assert result is True
+
+
+# ── SelectRows behaviour fix ──────────────────────────────────────────────────
+
+def test_tree_has_select_rows_behavior():
+    """QTreeView in FileView must use SelectRows so right-click on any cell selects the row."""
+    from PyQt6.QtWidgets import QAbstractItemView
+    _app()
+    fv = _make_file_view()
+    assert fv._tree.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows

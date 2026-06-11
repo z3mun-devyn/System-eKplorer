@@ -47,7 +47,7 @@ import termios
 
 from PyQt6.QtCore import QEvent, Qt, QSocketNotifier
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QKeyEvent, QPalette, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QVBoxLayout, QWidget, QTextEdit
+from PyQt6.QtWidgets import QApplication, QMenu, QVBoxLayout, QWidget, QTextEdit
 
 
 # ── ANSI / VT100 escape stripping ────────────────────────────────────────────
@@ -257,6 +257,11 @@ class TerminalView(QWidget):
         # read-only scroll-on-space is suppressed and all keys reach our handler.
         self._display.installEventFilter(self)
         self._display.viewport().installEventFilter(self)
+
+        # Custom context menu so Copy (Ctrl+Shift+C) and Paste (Ctrl+Shift+V)
+        # are discoverable; disables the default read-only QTextEdit menu.
+        self._display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._display.customContextMenuRequested.connect(self._on_context_menu)
         # ─────────────────────────────────────────────────────────────────────
 
         # Dark terminal background so the block cursor is visible and ANSI
@@ -506,6 +511,17 @@ class TerminalView(QWidget):
         mods = event.modifiers()
 
         if mods & Qt.KeyboardModifier.ControlModifier:
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                if key == Qt.Key.Key_C:
+                    cursor = self._display.textCursor()
+                    if cursor.hasSelection():
+                        QApplication.clipboard().setText(cursor.selectedText())
+                    return
+                if key == Qt.Key.Key_V:
+                    text = QApplication.clipboard().text()
+                    if text:
+                        self._write(text.encode("utf-8", errors="replace"))
+                    return
             if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
                 self._write(bytes([key - Qt.Key.Key_A + 1]))
                 return
@@ -562,6 +578,36 @@ class TerminalView(QWidget):
         cols = max(1, self._display.width() // char_w)
         rows = max(1, self._display.height() // char_h)
         _set_winsize(self._master_fd, rows, cols)
+
+    # ── Context menu ─────────────────────────────────────────────────────────
+
+    def _on_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        cursor = self._display.textCursor()
+
+        copy_act = menu.addAction("Copy\t(Ctrl+Shift+C)")
+        copy_act.setEnabled(cursor.hasSelection())
+
+        paste_act = menu.addAction("Paste\t(Ctrl+Shift+V)")
+        paste_act.setEnabled(bool(QApplication.clipboard().text()))
+
+        menu.addSeparator()
+        select_all_act = menu.addAction("Select All")
+        clear_act = menu.addAction("Clear")
+
+        act = menu.exec(self._display.mapToGlobal(pos))
+        if act == copy_act:
+            cursor = self._display.textCursor()
+            if cursor.hasSelection():
+                QApplication.clipboard().setText(cursor.selectedText())
+        elif act == paste_act:
+            text = QApplication.clipboard().text()
+            if text:
+                self._write(text.encode("utf-8", errors="replace"))
+        elif act == select_all_act:
+            self._display.selectAll()
+        elif act == clear_act:
+            self._display.clear()
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 

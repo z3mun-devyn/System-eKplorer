@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import getpass
+import grp
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,6 +15,8 @@ from backends.settings_backend import SettingsRepository
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -24,6 +29,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -43,9 +49,10 @@ _STARTUP_TAB_KEYS = [
 
 _CAT_GENERAL      = 0
 _CAT_FILE_MANAGER = 1
-_CAT_CLIPBOARD    = 2
-_CAT_SYSTEM       = 3
-_CAT_ABOUT        = 4
+_CAT_DASHBOARD    = 2
+_CAT_CLIPBOARD    = 3
+_CAT_SYSTEM       = 4
+_CAT_ABOUT        = 5
 
 
 class ConfigureDialog(QDialog):
@@ -94,6 +101,7 @@ class ConfigureDialog(QDialog):
         _categories = [
             ("preferences-system",  strings.CONFIGURE_CAT_GENERAL),
             ("folder",              strings.CONFIGURE_CAT_FILE_MANAGER),
+            ("utilities-system-monitor", strings.CONFIGURE_CAT_DASHBOARD),
             ("edit-paste",          strings.CONFIGURE_CAT_CLIPBOARD),
             ("preferences-desktop", strings.CONFIGURE_CAT_SYSTEM),
             ("help-about",          strings.CONFIGURE_CAT_ABOUT),
@@ -107,6 +115,7 @@ class ConfigureDialog(QDialog):
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_general_page())
         self._stack.addWidget(self._build_fm_page())
+        self._stack.addWidget(self._build_dashboard_page())
         self._stack.addWidget(self._build_clipboard_page())
         self._stack.addWidget(self._build_system_page())
         self._stack.addWidget(self._build_about_page())
@@ -177,6 +186,31 @@ class ConfigureDialog(QDialog):
 
         return page
 
+    def _build_dashboard_page(self) -> QWidget:
+        page = QWidget()
+        layout = QFormLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        rb_container = QWidget()
+        rb_layout = QHBoxLayout(rb_container)
+        rb_layout.setContentsMargins(0, 0, 0, 0)
+        rb_layout.setSpacing(16)
+
+        self._dash_simple_rb = QRadioButton(strings.CONFIGURE_DASH_SIMPLE)
+        self._dash_advanced_rb = QRadioButton(strings.CONFIGURE_DASH_ADVANCED)
+
+        self._dash_rb_group = QButtonGroup(page)
+        self._dash_rb_group.addButton(self._dash_simple_rb, 0)
+        self._dash_rb_group.addButton(self._dash_advanced_rb, 1)
+
+        rb_layout.addWidget(self._dash_simple_rb)
+        rb_layout.addWidget(self._dash_advanced_rb)
+        rb_layout.addStretch()
+
+        layout.addRow(strings.CONFIGURE_DASH_VIEW_MODE, rb_container)
+        return page
+
     def _build_clipboard_page(self) -> QWidget:
         page = QWidget()
         layout = QFormLayout(page)
@@ -211,6 +245,37 @@ class ConfigureDialog(QDialog):
         self._sys_fm_set_btn.setFixedWidth(160)
         self._sys_fm_set_btn.clicked.connect(self._on_set_default_fm)
         layout.addWidget(self._sys_fm_set_btn)
+
+        # ── SMART Access section ──────────────────────────────────────────────
+        sep = QWidget()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("QWidget { background: palette(mid); }")
+        layout.addWidget(sep)
+
+        smart_title = QLabel(strings.CONFIGURE_SYS_SMART_TITLE)
+        sf = QFont()
+        sf.setBold(True)
+        smart_title.setFont(sf)
+        layout.addWidget(smart_title)
+
+        smart_desc = QLabel(strings.CONFIGURE_SYS_SMART_LABEL)
+        smart_desc.setWordWrap(True)
+        layout.addWidget(smart_desc)
+
+        cmd_row = QHBoxLayout()
+        cmd_label = QLabel(f"<code>{strings.CONFIGURE_SYS_SMART_CMD}</code>")
+        cmd_label.setWordWrap(True)
+        cmd_row.addWidget(cmd_label, stretch=1)
+        copy_btn = QPushButton(strings.CONFIGURE_SYS_SMART_COPY_CMD)
+        copy_btn.setFixedWidth(120)
+        copy_btn.clicked.connect(self._on_copy_smart_cmd)
+        cmd_row.addWidget(copy_btn)
+        layout.addLayout(cmd_row)
+
+        self._smart_group_status = QLabel()
+        self._refresh_smart_group_status()
+        layout.addWidget(self._smart_group_status)
+
         layout.addStretch()
 
         self._refresh_default_fm_status()
@@ -274,6 +339,13 @@ class ConfigureDialog(QDialog):
         addr_mode = self._settings.get("fm.address_bar.mode") or "path"
         self._fm_addr_combo.setCurrentIndex(0 if addr_mode == "path" else 1)
 
+        # Dashboard
+        dash_mode = self._settings.get("dashboard.view_mode") or "simple"
+        if dash_mode == "advanced":
+            self._dash_advanced_rb.setChecked(True)
+        else:
+            self._dash_simple_rb.setChecked(True)
+
         # Clipboard
         max_e = 10
         v = self._settings.get("clipboard.max_entries")
@@ -298,6 +370,10 @@ class ConfigureDialog(QDialog):
 
         addr_mode = "path" if self._fm_addr_combo.currentIndex() == 0 else "breadcrumb"
         self._settings.set("fm.address_bar.mode", addr_mode)
+
+        # Dashboard
+        dash_mode = "advanced" if self._dash_advanced_rb.isChecked() else "simple"
+        self._settings.set("dashboard.view_mode", dash_mode)
 
         # Clipboard
         self._settings.set("clipboard.max_entries", str(self._cb_spinbox.value()))
@@ -328,6 +404,22 @@ class ConfigureDialog(QDialog):
         else:
             self._sys_fm_status.setText(strings.CONFIGURE_SYS_FM_STATUS_NOT)
             self._sys_fm_set_btn.setEnabled(True)
+
+    def _refresh_smart_group_status(self) -> None:
+        try:
+            disk_group = grp.getgrnam("disk")
+            in_group = getpass.getuser() in disk_group.gr_mem
+        except (KeyError, OSError):
+            in_group = False
+        if in_group:
+            self._smart_group_status.setText(strings.CONFIGURE_SYS_SMART_IN_GROUP)
+            self._smart_group_status.setStyleSheet("color: #27ae60;")
+        else:
+            self._smart_group_status.setText(strings.CONFIGURE_SYS_SMART_NOT_IN_GROUP)
+            self._smart_group_status.setStyleSheet("color: palette(mid);")
+
+    def _on_copy_smart_cmd(self) -> None:
+        QApplication.clipboard().setText(strings.CONFIGURE_SYS_SMART_CMD)
 
     def _on_set_default_fm(self) -> None:
         if _XDG_MIME is not None:
