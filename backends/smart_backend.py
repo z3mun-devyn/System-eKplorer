@@ -17,6 +17,30 @@ class SmartData:
     reallocated_sectors: int | None = None
 
 
+def _resolve_zfs_members(pool_name: str) -> list[str]:
+    """Run `zpool status -P <pool>` and extract unique member device paths."""
+    if shutil.which("zpool") is None:
+        return []
+    try:
+        result = subprocess.run(
+            ["zpool", "status", "-P", pool_name],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return []
+    seen: list[str] = []
+    for match in re.finditer(r"^\s+(/dev/\S+)", result.stdout, re.MULTILINE):
+        raw = match.group(1)
+        parent = Path(raw).parent
+        name = Path(raw).name
+        stripped = _strip_partition(name)
+        # Preserve full path for by-id/by-path symlinks; just strip the basename.
+        dev = str(parent / stripped)
+        if dev not in seen:
+            seen.append(dev)
+    return seen
+
+
 def _strip_partition(name: str) -> str:
     if re.search(r"(nvme|mmcblk)", name):
         return re.sub(r"p\d+$", "", name)
@@ -76,24 +100,37 @@ class SmartBackend:
     def is_available(self) -> bool:
         return shutil.which("smartctl") is not None
 
-    def device_for_mount(self, mount_point: str) -> str | None:
+    def devices_for_mount(self, mount_point: str) -> list[str]:
+        """Return disk device(s) backing mount_point.
+
+        Single-disk mounts → 1-element list.
+        ZFS pools → all member vdev disk paths via `zpool status -P`.
+        Returns [] when the mount is unknown or not mappable to /dev.
+        """
         try:
             text = self._mounts_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            return None
+            return []
 
         for line in text.splitlines():
             fields = line.split()
-            if len(fields) < 2:
+            if len(fields) < 3:
                 continue
-            if fields[1] == mount_point:
-                device = fields[0]
-                if not device.startswith("/dev/"):
-                    return None
-                name = Path(device).name
-                stripped = _strip_partition(name)
-                return f"/dev/{stripped}"
-        return None
+            if fields[1] != mount_point:
+                continue
+            device, fstype = fields[0], fields[2]
+            if fstype == "zfs" or not device.startswith("/dev/"):
+                pool = device.split("/")[0]
+                members = _resolve_zfs_members(pool)
+                return members
+            name = Path(device).name
+            return [f"/dev/{_strip_partition(name)}"]
+        return []
+
+    def device_for_mount(self, mount_point: str) -> str | None:
+        """Compat shim — returns first device or None. Prefer devices_for_mount."""
+        devices = self.devices_for_mount(mount_point)
+        return devices[0] if devices else None
 
     def check_runnable(self) -> bool:
         """Return True if smartctl --version exits successfully."""

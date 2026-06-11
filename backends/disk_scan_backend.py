@@ -10,18 +10,18 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 DISK_CATEGORIES: dict[str, str] = {
-    "System & OS":   "#1ABC9C",
-    "Applications":  "#2980B9",
-    "Documents":     "#27AE60",
-    "Pictures":      "#8E44AD",
-    "Videos":        "#E74C3C",
-    "Music & Audio": "#F39C12",
-    "Archives":      "#FF1493",
-    "Development":   "#D35400",
-    "Other":         "#566573",
+    "System & OS":           "#5A6B7B",
+    "Applications":          "#2D7DD2",
+    "Documents":             "#27AE60",
+    "Pictures":              "#9B59B6",
+    "Videos":                "#E74C3C",
+    "Music & Audio":         "#E67E22",
+    "Archives":              "#E91E8C",
+    "Development":           "#F1C40F",
+    "Other":                 "#7F8C8D",  # internal key used by pie widget
 }
 
-DISK_FREE_COLOR = "#34495E"
+DISK_FREE_COLOR = "#2C3440"
 
 _SYSTEM_PREFIXES = ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/boot", "/snap")
 _APP_PREFIXES = ("/opt", "/var/lib/flatpak", str(Path.home() / ".local/share/flatpak"))

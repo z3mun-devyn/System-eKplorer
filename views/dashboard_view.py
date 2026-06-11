@@ -276,6 +276,13 @@ class DriveTile(QFrame):
         name_label.setWordWrap(True)
         header.addWidget(name_label, stretch=1)
 
+        rename_btn = QPushButton(strings.ACTION_RENAME_DRIVE)
+        rename_btn.setFlat(True)
+        rename_btn.setFixedSize(22, 22)
+        rename_btn.setToolTip(strings.ACTION_RENAME_LABEL)
+        rename_btn.clicked.connect(self._open_label_modal)
+        header.addWidget(rename_btn, stretch=0)
+
         # Badge always allocated (fixed height) — empty+transparent when no label
         self._badge = QLabel()
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -678,6 +685,13 @@ class AdvancedDriveTile(QFrame):
         self._badge.setFixedHeight(20)
         header_row.addWidget(self._badge, stretch=0)
 
+        adv_rename_btn = QPushButton(strings.ACTION_RENAME_DRIVE)
+        adv_rename_btn.setFlat(True)
+        adv_rename_btn.setFixedSize(22, 22)
+        adv_rename_btn.setToolTip(strings.ACTION_RENAME_LABEL)
+        adv_rename_btn.clicked.connect(self._open_label_modal)
+        header_row.addWidget(adv_rename_btn)
+
         rescan_btn = QPushButton(strings.DASHBOARD_RESCAN)
         rescan_btn.setFlat(True)
         rescan_btn.clicked.connect(self._start_scan)
@@ -876,11 +890,14 @@ class AdvancedDriveTile(QFrame):
         total_bytes = self._drive.total_bytes or sum(data.values())
         free_bytes = max(0, self._drive.free_bytes)
 
-        # Named categories from the scan (everything the scanner labeled)
-        named = {k: v for k, v in data.items()}
+        # Separate named categories from the scan's own "Other" bucket so there
+        # is never a duplicate "Other" entry in the legend.  The scan's "Other"
+        # (uncategorized files) merges into other_bytes via the arithmetic below.
+        named = {k: v for k, v in data.items() if k != "Other"}
         named_total = sum(named.values())
 
-        # "Other" = used space not covered by the scan (permissions, metadata, etc.)
+        # other_bytes = used space not accounted for by named categories
+        # (naturally absorbs the scan's "Other" bucket + filesystem metadata).
         used_bytes = total_bytes - free_bytes
         other_bytes = max(0, used_bytes - named_total)
 
@@ -903,7 +920,7 @@ class AdvancedDriveTile(QFrame):
 
         # Other (uncategorized) second-to-last, Free Space always last
         if other_bytes > 0:
-            segments.append(("Other", other_bytes))
+            segments.append((strings.DASHBOARD_OTHER_UNCATEGORIZED, other_bytes))
         segments.append((strings.DASHBOARD_FREE_SPACE, free_bytes))
 
         for cat, val in segments:
@@ -916,8 +933,10 @@ class AdvancedDriveTile(QFrame):
             swatch.setFixedSize(12, 12)
             if cat == strings.DASHBOARD_FREE_SPACE:
                 color = DISK_FREE_COLOR
+            elif cat == strings.DASHBOARD_OTHER_UNCATEGORIZED:
+                color = DISK_CATEGORIES.get("Other", "#7F8C8D")
             else:
-                color = DISK_CATEGORIES.get(cat, "#566573")
+                color = DISK_CATEGORIES.get(cat, "#7F8C8D")
             swatch.setStyleSheet(
                 f"QLabel {{ background: {color}; border-radius: 2px; }}"
             )
@@ -958,11 +977,19 @@ class AdvancedDriveTile(QFrame):
         lbl.setStyleSheet("color: palette(mid);")
         self._smart_layout.addWidget(lbl)
 
-    def _on_smart_finished(self, data: SmartData) -> None:
+    def _on_smart_finished(self, results: list) -> None:
         while self._smart_layout.count():
             item = self._smart_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+        for device, data in results:
+            self._add_smart_device_rows(device, data, multi=(len(results) > 1))
+
+    def _add_smart_device_rows(
+        self, device: str, data: SmartData, multi: bool
+    ) -> None:
+        dev_label = Path(device).name if multi else None
 
         if data.health == "permission_denied":
             lbl = QLabel(strings.DASHBOARD_SMART_NO_PERM)
@@ -974,42 +1001,45 @@ class AdvancedDriveTile(QFrame):
             self._smart_layout.addWidget(howto_btn)
             return
 
-        health_lbl = QLabel(f"{strings.DASHBOARD_SMART_TITLE}: {data.health}")
+        prefix = f"{dev_label}: " if dev_label else ""
+        health_lbl = QLabel(f"{prefix}{strings.DASHBOARD_SMART_TITLE}: {data.health}")
         if data.health == strings.DASHBOARD_SMART_PASSED:
             health_lbl.setStyleSheet("color: #27ae60;")
         elif data.health == strings.DASHBOARD_SMART_FAILED:
             health_lbl.setStyleSheet("color: #e74c3c;")
         self._smart_layout.addWidget(health_lbl)
 
-        if data.power_on_hours is not None:
-            h = data.power_on_hours
-            y, rem = divmod(h, 8760)
-            m = rem // 730
-            poh_lbl = QLabel(
-                f"{strings.DASHBOARD_SMART_POH}: {h:,} hrs"
-                + (f" (≈ {y} yrs {m} months)" if y or m else "")
-            )
-            self._smart_layout.addWidget(poh_lbl)
+        if not multi:
+            if data.power_on_hours is not None:
+                h = data.power_on_hours
+                y, rem = divmod(h, 8760)
+                m = rem // 730
+                poh_lbl = QLabel(
+                    f"{strings.DASHBOARD_SMART_POH}: {h:,} hrs"
+                    + (f" (≈ {y} yrs {m} months)" if y or m else "")
+                )
+                self._smart_layout.addWidget(poh_lbl)
 
-        if data.temperature_c is not None:
-            t = data.temperature_c
-            temp_lbl = QLabel(f"{strings.DASHBOARD_SMART_TEMP}: {t} °C")
-            if t > 60:
-                temp_lbl.setStyleSheet("color: #e74c3c;")
-            elif t > 50:
-                temp_lbl.setStyleSheet("color: #e67e22;")
-            self._smart_layout.addWidget(temp_lbl)
+            if data.temperature_c is not None:
+                t = data.temperature_c
+                temp_lbl = QLabel(f"{strings.DASHBOARD_SMART_TEMP}: {t} °C")
+                if t > 60:
+                    temp_lbl.setStyleSheet("color: #e74c3c;")
+                elif t > 50:
+                    temp_lbl.setStyleSheet("color: #e67e22;")
+                self._smart_layout.addWidget(temp_lbl)
 
-        if data.reallocated_sectors and data.reallocated_sectors > 0:
-            realloc_lbl = QLabel(
-                strings.DASHBOARD_SMART_REALLOC.format(n=data.reallocated_sectors)
-            )
-            realloc_lbl.setStyleSheet("color: #e74c3c;")
-            self._smart_layout.addWidget(realloc_lbl)
+            if data.reallocated_sectors and data.reallocated_sectors > 0:
+                realloc_lbl = QLabel(
+                    strings.DASHBOARD_SMART_REALLOC.format(n=data.reallocated_sectors)
+                )
+                realloc_lbl.setStyleSheet("color: #e74c3c;")
+                self._smart_layout.addWidget(realloc_lbl)
 
 
 class _SmartWorker(QObject):
-    finished = pyqtSignal(SmartData)
+    # Emits list[tuple[str, SmartData | None]]: (device_path, data)
+    finished = pyqtSignal(list)
     unavailable = pyqtSignal(str)
 
     def __init__(self, mount_point: str) -> None:
@@ -1021,20 +1051,20 @@ class _SmartWorker(QObject):
         if not backend.is_available():
             self.unavailable.emit(strings.DASHBOARD_SMART_UNAVAILABLE)
             return
-        # Verify smartctl actually executes (not just present on PATH)
         if not backend.check_runnable():
             self.unavailable.emit(strings.DASHBOARD_SMART_UNAVAILABLE)
             return
-        device = backend.device_for_mount(self._mount_point)
-        if device is None:
+        devices = backend.devices_for_mount(self._mount_point)
+        if not devices:
             self.unavailable.emit(strings.DASHBOARD_SMART_UNAVAILABLE)
             return
-        data = backend.get_data(device)
-        if data is None:
-            # Installed and runs, but couldn't read device — most likely permissions
-            self.finished.emit(SmartData(health="permission_denied"))
-            return
-        self.finished.emit(data)
+        results: list[tuple[str, SmartData | None]] = []
+        for device in devices:
+            data = backend.get_data(device)
+            if data is None:
+                data = SmartData(health="permission_denied")
+            results.append((device, data))
+        self.finished.emit(results)
 
 
 class _DriveLoader(QObject):

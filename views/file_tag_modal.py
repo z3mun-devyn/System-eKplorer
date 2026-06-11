@@ -26,6 +26,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QLayout,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -169,12 +171,12 @@ class FileTagModal(QDialog):
         scroll.setMinimumHeight(60)
         scroll.setMaximumHeight(120)
 
-        pill_widget = QWidget()
-        pill_widget.setSizePolicy(
+        self._pill_widget = QWidget()
+        self._pill_widget.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        self._pill_layout = _FlowLayout(pill_widget, h_gap=6, v_gap=6)
-        pill_widget.setLayout(self._pill_layout)
-        scroll.setWidget(pill_widget)
+        self._pill_layout = _FlowLayout(self._pill_widget, h_gap=6, v_gap=6)
+        self._pill_widget.setLayout(self._pill_layout)
+        scroll.setWidget(self._pill_widget)
         outer.addWidget(scroll)
 
         divider = QFrame()
@@ -245,8 +247,35 @@ class FileTagModal(QDialog):
 
         for tag in all_tags:
             pill = TagPill(tag, tag.name in assigned_names)
+            pill.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            pill.customContextMenuRequested.connect(
+                lambda pos, t=tag, p=pill: self._on_pill_context_menu(t, p, pos)
+            )
             self._pill_layout.addWidget(pill)
             self._pills.append(pill)
+
+    def _on_pill_context_menu(self, tag: Tag, pill, pos) -> None:
+        menu = QMenu(self)
+        delete_act = menu.addAction(strings.FT_DELETE_TAG_CTX)
+        if menu.exec(pill.mapToGlobal(pos)) is not delete_act:
+            return
+        msg = QMessageBox(self)
+        msg.setWindowTitle(strings.FT_DELETE_TAG_TITLE.format(name=tag.name))
+        msg.setText(strings.FT_DELETE_TAG_TITLE.format(name=tag.name))
+        msg.setInformativeText(strings.FT_DELETE_TAG_BODY)
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.button(QMessageBox.StandardButton.Yes).setText(strings.TAG_DELETE_YES)
+        msg.button(QMessageBox.StandardButton.No).setText(strings.TAG_DELETE_NO)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        if msg.exec() != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._tag_repo.delete_tag(tag.name)
+        except Exception:
+            pass
+        self._rebuild_pills()
+        self.saved.emit()
 
     def _select_color(self, color: str) -> None:
         self._selected_color = color

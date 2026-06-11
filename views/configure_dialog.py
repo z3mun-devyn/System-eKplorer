@@ -165,6 +165,9 @@ class ConfigureDialog(QDialog):
         ])
         layout.addRow(strings.CONFIGURE_STARTUP_TAB, self._startup_combo)
 
+        self._reduce_anim_cb = QCheckBox(strings.CONFIGURE_REDUCE_ANIM)
+        layout.addRow("", self._reduce_anim_cb)
+
         return page
 
     def _build_fm_page(self) -> QWidget:
@@ -328,6 +331,9 @@ class ConfigureDialog(QDialog):
         startup = self._settings.get("app.startup_tab") or "dashboard"
         idx = _STARTUP_TAB_KEYS.index(startup) if startup in _STARTUP_TAB_KEYS else 0
         self._startup_combo.setCurrentIndex(idx)
+        self._reduce_anim_cb.setChecked(
+            self._settings.get("ui.reduce_animations") == "true"
+        )
 
         # File Manager
         view_mode = self._settings.get("fm.view_mode") or "details"
@@ -360,6 +366,10 @@ class ConfigureDialog(QDialog):
         # General
         startup_key = _STARTUP_TAB_KEYS[self._startup_combo.currentIndex()]
         self._settings.set("app.startup_tab", startup_key)
+        self._settings.set(
+            "ui.reduce_animations",
+            "true" if self._reduce_anim_cb.isChecked() else "false",
+        )
 
         # File Manager
         view_mode = "details" if self._fm_view_combo.currentIndex() == 0 else "icons"

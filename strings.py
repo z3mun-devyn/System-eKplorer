@@ -652,4 +652,16 @@ DASHBOARD_SMART_FAILED      = "FAILED"
 DASHBOARD_SMART_POH         = "Power-On Hours"
 DASHBOARD_SMART_TEMP        = "Temperature"
 DASHBOARD_SMART_REALLOC     = "⚠ {n} reallocated sectors"
-DASHBOARD_FREE_SPACE        = "Free Space"
+DASHBOARD_FREE_SPACE              = "Free Space"
+DASHBOARD_OTHER_UNCATEGORIZED     = "Other (uncategorized)"
+
+# ── File tag modal — tag deletion ─────────────────────────────────────────────
+FT_DELETE_TAG_CTX   = "Delete tag"
+FT_DELETE_TAG_TITLE = 'Delete tag "{name}"?'
+FT_DELETE_TAG_BODY  = "This will remove the tag from all assigned files and packages."
+
+# ── Configure — appearance ────────────────────────────────────────────────────
+CONFIGURE_REDUCE_ANIM = "Reduce animations"
+
+# ── Drive tile rename ─────────────────────────────────────────────────────────
+ACTION_RENAME_DRIVE = "✎"

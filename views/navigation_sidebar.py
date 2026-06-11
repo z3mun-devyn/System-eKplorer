@@ -15,11 +15,12 @@ from pathlib import Path
 
 import strings
 from backends.recent_backend import RecentPathsBackend
+from backends.settings_backend import SettingsRepository
 from backends.storage_backend import StorageBackend
 from models.storage import Drive, UnmountedDrive
 
-from PyQt6.QtCore import QObject, QSize, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon
+from PyQt6.QtCore import QEvent, QObject, QSize, QThread, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon
 from PyQt6.QtWidgets import (
     QAbstractScrollArea,
     QApplication,
@@ -206,10 +207,13 @@ class NavigationSidebar(QWidget):
         drives_updated(mounted, unmounted): emitted whenever drives are (re)loaded.
     """
 
-    navigate_requested       = pyqtSignal(str)
-    drives_updated           = pyqtSignal(list, list)
+    navigate_requested        = pyqtSignal(str)
+    drives_updated            = pyqtSignal(list, list)
     wastebin_action_requested = pyqtSignal(str)
     # emits "restore_all" | "empty" when user right-clicks the Wastebin node
+    sidebar_drop_requested    = pyqtSignal(list, str, bool)
+    # (source_paths: list[str], target_dir: str, copy: bool)
+    # target_dir == strings.TRASH_SENTINEL → route to trash
 
     def __init__(self, fixed_width: int | None = 220,
                  parent: QWidget | None = None) -> None:
@@ -379,12 +383,115 @@ class NavigationSidebar(QWidget):
         self._mount_worker: _SidebarMountWorker | None = None
         self._drives_loaded = False
 
+        # ── Drag-drop onto sidebar tree items ────────────────────────────────
+        for tree in (self._quick_tree, self._drives_tree):
+            tree.setAcceptDrops(True)
+            tree.viewport().setAcceptDrops(True)
+            tree.viewport().installEventFilter(self)
+
+        # Apply reduce-animations setting at startup
+        self.apply_animation_setting()
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         if not self._drives_loaded:
             self._drives_loaded = True
             self._load_drives()
         self.refresh_recent()
+
+    # ── Reduce-animations setting ─────────────────────────────────────────────
+
+    def apply_animation_setting(self) -> None:
+        """Read ui.reduce_animations from settings and apply setAnimated."""
+        reduced = SettingsRepository().get("ui.reduce_animations") == "true"
+        for tree in (self._quick_tree, self._drives_tree):
+            tree.setAnimated(not reduced)
+
+    # ── Drag-drop event filter ────────────────────────────────────────────────
+
+    def eventFilter(self, obj, event) -> bool:
+        etype = event.type()
+        if etype == QEvent.Type.DragEnter:
+            return self._on_drag_enter(obj, event)
+        if etype == QEvent.Type.DragMove:
+            return self._on_drag_move(obj, event)
+        if etype == QEvent.Type.Drop:
+            return self._on_drop(obj, event)
+        return False
+
+    def _tree_for_viewport(self, viewport):
+        for tree in (self._quick_tree, self._drives_tree):
+            if tree.viewport() is viewport:
+                return tree
+        return None
+
+    def _resolve_drop_target(self, tree, pos) -> str | None:
+        """Return directory path for drop target under pos, or None to reject."""
+        item = tree.itemAt(pos)
+        if item is None:
+            return None
+        # Wastebin → special sentinel
+        if item is self._wastebin_item:
+            return strings.TRASH_SENTINEL
+        # Unmounted drive → reject (can't drop onto unmounted)
+        if item.data(0, _UNMOUNTED_ROLE) is not None:
+            return None
+        path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path_str or path_str == strings.TRASH_SENTINEL:
+            return path_str if path_str == strings.TRASH_SENTINEL else None
+        if os.path.isdir(path_str):
+            return path_str
+        return None
+
+    def _on_drag_enter(self, viewport, event) -> bool:
+        tree = self._tree_for_viewport(viewport)
+        if tree is None:
+            return False
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return True
+        target = self._resolve_drop_target(tree, event.pos())
+        if target is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+        return True
+
+    def _on_drag_move(self, viewport, event) -> bool:
+        tree = self._tree_for_viewport(viewport)
+        if tree is None:
+            return False
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return True
+        target = self._resolve_drop_target(tree, event.pos())
+        if target is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+        return True
+
+    def _on_drop(self, viewport, event) -> bool:
+        from PyQt6.QtCore import Qt as _Qt
+        tree = self._tree_for_viewport(viewport)
+        if tree is None:
+            return False
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return True
+        target = self._resolve_drop_target(tree, event.pos())
+        if target is None:
+            event.ignore()
+            return True
+        source_paths = [u.toLocalFile() for u in event.mimeData().urls()
+                        if u.isLocalFile()]
+        if not source_paths:
+            event.ignore()
+            return True
+        copy = bool(event.keyboardModifiers() & _Qt.KeyboardModifier.ControlModifier)
+        event.acceptProposedAction()
+        self.sidebar_drop_requested.emit(source_paths, target, copy)
+        return True
 
     # ── Public API ────────────────────────────────────────────────────────────
 

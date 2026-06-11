@@ -211,6 +211,7 @@ class FileManagerView(QWidget):
         self._sidebar = NavigationSidebar(fixed_width=None)
         self._sidebar.navigate_requested.connect(self.navigate_to)
         self._sidebar.drives_updated.connect(self._on_drives_updated)
+        self._sidebar.sidebar_drop_requested.connect(self._on_sidebar_drop_requested)
         self._outer_splitter.addWidget(self._sidebar)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -909,6 +910,20 @@ class FileManagerView(QWidget):
         self._ops_worker.failed.connect(self._ops_thread.quit)
         self._ops_thread.finished.connect(self._ops_worker.deleteLater)
         self._ops_thread.start()
+
+    def _on_sidebar_drop_requested(
+        self, source_paths: list, target_dir: str, copy: bool,
+    ) -> None:
+        if target_dir == strings.TRASH_SENTINEL:
+            srcs = [Path(p) for p in source_paths if Path(p).exists()]
+            if srcs:
+                self._start_file_op(
+                    "trash", srcs, dst_dir=None,
+                    conflict=ConflictStrategy.RENAME,
+                    desc=strings.FM_OP_MOVING,
+                )
+            return
+        self._on_drop_requested(source_paths, target_dir, copy)
 
     def _on_drop_requested(
         self, source_paths: list, target_dir: str, copy: bool,

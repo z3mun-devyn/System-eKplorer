@@ -1868,6 +1868,96 @@ changed from `#1C2833` to `DISK_FREE_COLOR = "#34495E"` (visible slate).
 
 ---
 
+## Surgical fix pass — 6 items
+
+### FIX 1 — SMART: ZFS pool member-disk resolution (`backends/smart_backend.py`)
+`device_for_mount` returned `None` for ZFS pools because `/proc/mounts` lists the pool name
+(not `/dev/...`) as the device field.
+
+**Fix:**
+- `_resolve_zfs_members(pool_name) → list[str]`: runs `zpool status -P {pool}`, extracts
+  `/dev/...` lines via `r'^\s+(/dev/\S+)'`, preserving full `by-id`/`by-path` paths and
+  stripping partition suffixes from the basename only.
+- `device_for_mount` renamed → `devices_for_mount() → list[str]`. Detects ZFS when
+  `fstype == "zfs"` or device field doesn't start with `/dev/`; resolves pool members.
+  Single-disk mounts return a 1-element list.
+- Old `device_for_mount(mount_point) → str | None` kept as a compat shim.
+- `_SmartWorker` now calls `devices_for_mount`, iterates all member devices, and emits
+  `finished = pyqtSignal(list)` with `list[tuple[str, SmartData]]`.
+- `_on_smart_finished` in `AdvancedDriveTile` calls `_add_smart_device_rows(device, data,
+  multi)`. Multi-disk: shows `sdb: Drive Health: PASSED` per device; single: same detail as before.
+
+**Diagnosis:** `zpool status -P tank` with two members produces:
+```
+    /dev/sdb  ONLINE  ...
+    /dev/sdc  ONLINE  ...
+```
+Regex catches both; `_strip_partition("sdb")` = `"sdb"` → `/dev/sdb`. Partition forms like
+`/dev/sda3` → `/dev/sda`. By-id paths like `/dev/disk/by-id/ata-WDC_12345` are kept intact
+(basename-only stripping preserves the full path).
+
+### FIX 2 — Pie: two "Other" entries eliminated (`disk_scan_backend.py`, `dashboard_view.py`)
+**Root cause:** `DiskScanBackend.scan()` emits `{"Other": X}` for uncategorized files.
+`_on_scan_finished` included "Other" in `named` AND also appended a second `("Other", other_bytes)`
+in `_build_legend` for filesystem overhead — two legend rows with the same name.
+
+**Fix:**
+- `_on_scan_finished`: `named.pop("Other", None)` before computing `named_total`. The scan's
+  "Other" is naturally absorbed into `other_bytes = used_bytes - named_total`.
+- Legend uses `strings.DASHBOARD_OTHER_UNCATEGORIZED` ("Other (uncategorized)") as the label.
+  Color lookup falls back to `DISK_CATEGORIES["Other"]`.
+- `DISK_CATEGORIES` updated to the new palette (slate/blue/green/purple/red/orange/magenta/amber/mid-gray).
+- `DISK_FREE_COLOR` updated to `#2C3440`.
+
+### FIX 3 — Tag deletion in file tag modal (`views/file_tag_modal.py`, `strings.py`)
+**Root cause:** `TagRepository.delete_tag` existed but was only wired to the Packages sidebar
+right-click menu. The file tag modal had no delete affordance.
+
+**Fix:** Right-click on any pill in `FileTagModal` → context menu "Delete tag" → confirmation
+dialog → `_tag_repo.delete_tag(name)` → `_rebuild_pills()` + `saved.emit()`. FK ON DELETE
+CASCADE on both `file_tags.tag_name` and `package_tags.tag_name` ensures both junction tables
+are cleaned up by SQLite automatically.
+
+**Schema cascade confirmed:**
+- `package_tags.tag_name REFERENCES tags(name) ON DELETE CASCADE` ✓ (V2 DDL)
+- `file_tags.tag_name REFERENCES tags(name) ON DELETE CASCADE` ✓ (V5 DDL)
+
+### FIX 4 — Sidebar drag-drop (`views/navigation_sidebar.py`, `views/file_manager_view.py`)
+**Fix:** `NavigationSidebar` installs itself as an event filter on both tree viewports.
+- `DragEnter`/`DragMove`: resolves target item to a dir path; accepts if valid, rejects
+  section headers, unmounted drives, and items with no path.
+- `Drop`: extracts `QUrl.toLocalFile()` paths, checks `ControlModifier` for copy flag,
+  emits `sidebar_drop_requested(sources, target_dir, copy)`.
+- Wastebin item → `target_dir = strings.TRASH_SENTINEL`.
+- `FileManagerView._on_sidebar_drop_requested`: TRASH_SENTINEL → `_start_file_op("trash", ...)`
+  (send to trash); otherwise delegates to existing `_on_drop_requested` (conflict dialog + file op).
+
+### FIX 5 — Drive tile rename affordance (`views/dashboard_view.py`)
+Both `DriveTile` and `AdvancedDriveTile` now have a small flat `"✎"` button (22×22) in the
+header row next to the label badge. Clicking opens the existing `LabelModal`. The modal already
+saves by `device_id` (not mount_point) — the schema uses `device_id TEXT PRIMARY KEY` in
+`drive_labels`, which is the stable hardware identifier (by-id path or WWN). No schema change.
+
+### FIX 6 — Reduce animations toggle (`views/configure_dialog.py`, `views/navigation_sidebar.py`, `main.py`)
+- `ConfigureDialog` General page: `self._reduce_anim_cb = QCheckBox(strings.CONFIGURE_REDUCE_ANIM)`.
+  Reads/writes `ui.reduce_animations` ("true"/"false"). Default: unset (false).
+- `NavigationSidebar.apply_animation_setting()`: reads the setting, calls
+  `setAnimated(not reduced)` on both `_quick_tree` and `_drives_tree`. Called in `__init__`
+  and after `ConfigureDialog.exec()` returns `Accepted` in `MainWindow._open_configure`.
+- `SettingsRepository` imported at module level (not lazily) so tests can monkeypatch it.
+
+### Tests: 854/854 (+22 in `tests/test_surgical_fix_pass.py`)
+FIX 1 (8): `_resolve_zfs_members` parses dev paths; strips partitions; handles by-id paths;
+returns [] when zpool missing; `devices_for_mount` returns members for ZFS pool; non-/dev/ treated
+as pool; single disk returns 1-element list; compat shim works.
+FIX 2 (2): no raw "Other" in legend; "Other" not in pie widget's `_named`.
+FIX 3 (3): `delete_tag` cascades to `file_tags`; cascades to `package_tags`; removes both junctions.
+FIX 4 (3): drop emits correct target_dir; wastebin emits TRASH_SENTINEL; Ctrl → copy=True.
+FIX 5 (2): label saved by device_id; schema has no mount_point column.
+FIX 6 (4): reduce=false → animated; reduce=true → not animated; dialog reads setting; dialog writes setting.
+
+---
+
 ## ARCHITECTURE NOTE: file tags vs package tags are separate junctions
 
 Both use the shared `tags` table (`name TEXT PRIMARY KEY`, `color_hex`). Assignments live in

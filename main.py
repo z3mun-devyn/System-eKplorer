@@ -181,7 +181,9 @@ class MainWindow(QMainWindow):
 
     def _open_configure(self) -> None:
         dlg = ConfigureDialog(parent=self)
-        dlg.exec()
+        if dlg.exec():
+            self._dashboard_tab._sidebar.apply_animation_setting()
+            self._file_manager_tab.file_manager_view._sidebar.apply_animation_setting()
 
     # ── Single-instance server ────────────────────────────────────────────────
 
