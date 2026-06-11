@@ -257,9 +257,8 @@ def test_delete_tag_removes_both_junctions(tmp_path):
 def test_sidebar_drop_emits_correct_target_dir(tmp_path):
     """dropEvent on a tree item resolves to its UserRole path."""
     from views.navigation_sidebar import NavigationSidebar
-    from PyQt6.QtCore import QMimeData, QUrl, Qt
+    from PyQt6.QtCore import QMimeData, QPointF, QUrl, Qt
     from PyQt6.QtWidgets import QTreeWidgetItem
-    from PyQt6.QtGui import QDropEvent
 
     sidebar = NavigationSidebar()
 
@@ -279,12 +278,13 @@ def test_sidebar_drop_emits_correct_target_dir(tmp_path):
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(str(src_file))])
 
-    # Fake event
+    # Fake event — PyQt6 drag events expose .position() (QPointF), NOT .pos().
     event = MagicMock()
     event.type.return_value = None
     event.mimeData.return_value = mime
-    event.pos.return_value = sidebar._quick_tree.visualItemRect(item).center()
-    event.keyboardModifiers.return_value = Qt.KeyboardModifier.NoModifier
+    event.position.return_value = QPointF(
+        sidebar._quick_tree.visualItemRect(item).center())
+    event.modifiers.return_value = Qt.KeyboardModifier.NoModifier
 
     # Directly test _on_drop
     sidebar._on_drop(sidebar._quick_tree.viewport(), event)
@@ -300,7 +300,7 @@ def test_sidebar_drop_wastebin_emits_trash_sentinel(tmp_path):
     """Dropping onto Wastebin emits TRASH_SENTINEL as target_dir."""
     import strings
     from views.navigation_sidebar import NavigationSidebar
-    from PyQt6.QtCore import QMimeData, QUrl, Qt
+    from PyQt6.QtCore import QMimeData, QPointF, QUrl, Qt
 
     sidebar = NavigationSidebar()
 
@@ -315,10 +315,10 @@ def test_sidebar_drop_wastebin_emits_trash_sentinel(tmp_path):
 
     event = MagicMock()
     event.mimeData.return_value = mime
-    event.pos.return_value = sidebar._quick_tree.visualItemRect(
+    event.position.return_value = QPointF(sidebar._quick_tree.visualItemRect(
         sidebar._wastebin_item
-    ).center()
-    event.keyboardModifiers.return_value = Qt.KeyboardModifier.NoModifier
+    ).center())
+    event.modifiers.return_value = Qt.KeyboardModifier.NoModifier
 
     sidebar._on_drop(sidebar._quick_tree.viewport(), event)
 
@@ -330,7 +330,7 @@ def test_sidebar_drop_wastebin_emits_trash_sentinel(tmp_path):
 def test_sidebar_drop_ctrl_sets_copy_flag(tmp_path):
     """Ctrl held during drop → copy=True."""
     from views.navigation_sidebar import NavigationSidebar
-    from PyQt6.QtCore import QMimeData, QUrl, Qt
+    from PyQt6.QtCore import QMimeData, QPointF, QUrl, Qt
     from PyQt6.QtWidgets import QTreeWidgetItem
 
     sidebar = NavigationSidebar()
@@ -349,8 +349,9 @@ def test_sidebar_drop_ctrl_sets_copy_flag(tmp_path):
 
     event = MagicMock()
     event.mimeData.return_value = mime
-    event.pos.return_value = sidebar._quick_tree.visualItemRect(item).center()
-    event.keyboardModifiers.return_value = Qt.KeyboardModifier.ControlModifier
+    event.position.return_value = QPointF(
+        sidebar._quick_tree.visualItemRect(item).center())
+    event.modifiers.return_value = Qt.KeyboardModifier.ControlModifier
 
     sidebar._on_drop(sidebar._quick_tree.viewport(), event)
 

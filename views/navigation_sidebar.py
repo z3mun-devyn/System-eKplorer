@@ -9,6 +9,7 @@ Sections (top to bottom):
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -443,55 +444,85 @@ class NavigationSidebar(QWidget):
             return path_str
         return None
 
+    # NOTE: PyQt6/Qt6 removed QDragEnterEvent/QDragMoveEvent/QDropEvent.pos()
+    # (it returned a QPoint). The replacement is .position() → QPointF, which
+    # itemAt()/indexAt() can't take, so we convert with .toPoint(). Every drag
+    # handler below MUST use event.position().toPoint(), never event.pos().
+    # Each handler is wrapped so a failed drag/drop fails cleanly and releases
+    # the cursor instead of freezing the UI mid-drag.
+
     def _on_drag_enter(self, viewport, event) -> bool:
-        tree = self._tree_for_viewport(viewport)
-        if tree is None:
-            return False
-        if not event.mimeData().hasUrls():
+        try:
+            tree = self._tree_for_viewport(viewport)
+            if tree is None:
+                return False
+            if not event.mimeData().hasUrls():
+                event.ignore()
+                return True
+            pos = event.position().toPoint()
+            target = self._resolve_drop_target(tree, pos)
+            if target is not None:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return True
+        except Exception:
+            logging.exception("sidebar drag-enter failed")
             event.ignore()
             return True
-        target = self._resolve_drop_target(tree, event.pos())
-        if target is not None:
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-        return True
 
     def _on_drag_move(self, viewport, event) -> bool:
-        tree = self._tree_for_viewport(viewport)
-        if tree is None:
-            return False
-        if not event.mimeData().hasUrls():
+        try:
+            tree = self._tree_for_viewport(viewport)
+            if tree is None:
+                return False
+            if not event.mimeData().hasUrls():
+                event.ignore()
+                return True
+            pos = event.position().toPoint()
+            target = self._resolve_drop_target(tree, pos)
+            if target is not None:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return True
+        except Exception:
+            logging.exception("sidebar drag-move failed")
             event.ignore()
             return True
-        target = self._resolve_drop_target(tree, event.pos())
-        if target is not None:
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-        return True
 
     def _on_drop(self, viewport, event) -> bool:
         from PyQt6.QtCore import Qt as _Qt
-        tree = self._tree_for_viewport(viewport)
-        if tree is None:
-            return False
-        if not event.mimeData().hasUrls():
-            event.ignore()
+        try:
+            tree = self._tree_for_viewport(viewport)
+            if tree is None:
+                return False
+            if not event.mimeData().hasUrls():
+                event.ignore()
+                return True
+            pos = event.position().toPoint()
+            target = self._resolve_drop_target(tree, pos)
+            if target is None:
+                event.ignore()
+                return True
+            source_paths = [u.toLocalFile() for u in event.mimeData().urls()
+                            if u.isLocalFile()]
+            if not source_paths:
+                event.ignore()
+                return True
+            # Qt6 removed QDropEvent.keyboardModifiers(); use .modifiers().
+            copy = bool(event.modifiers() & _Qt.KeyboardModifier.ControlModifier)
+            event.acceptProposedAction()
+            self.sidebar_drop_requested.emit(source_paths, target, copy)
             return True
-        target = self._resolve_drop_target(tree, event.pos())
-        if target is None:
-            event.ignore()
+        except Exception:
+            # A failed drop must release the cursor cleanly, never hang the UI.
+            logging.exception("sidebar drop failed")
+            try:
+                event.acceptProposedAction()
+            except Exception:
+                pass
             return True
-        source_paths = [u.toLocalFile() for u in event.mimeData().urls()
-                        if u.isLocalFile()]
-        if not source_paths:
-            event.ignore()
-            return True
-        copy = bool(event.keyboardModifiers() & _Qt.KeyboardModifier.ControlModifier)
-        event.acceptProposedAction()
-        self.sidebar_drop_requested.emit(source_paths, target, copy)
-        return True
 
     # ── Public API ────────────────────────────────────────────────────────────
 

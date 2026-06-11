@@ -2014,3 +2014,63 @@ does not raise (the regression line); the `permission_denied` fallback renders l
 how-to button; `_on_smart_finished` with >1 result (multi=True internally) does not raise.
 
 ### Tests: 857/857 (+3 in `tests/test_dashboard_smart_rows.py`)
+
+---
+
+## HOTFIX — Sidebar drag-drop crash: PyQt6/Qt6 event-API migration (`views/navigation_sidebar.py`)
+
+**Symptom:** Dragging a file onto a sidebar target froze the cursor dead mid-drag
+("freeze dead in tracks") — a failed drop left the drag operation hung.
+
+**Root cause — TWO removed-in-Qt6 event methods in the Fix-4 sidebar DnD code:**
+
+1. **`.pos()` → `.position().toPoint()`** — Qt6 removed `pos()` from
+   `QDragEnterEvent`/`QDragMoveEvent`/`QDropEvent`; it is now `position()` returning a
+   **QPointF**. All three handlers (`_on_drag_enter`, `_on_drag_move`, `_on_drop`) called
+   `event.pos()` → `AttributeError` mid-drag. `itemAt()`/`indexAt()` need a QPoint, so the
+   conversion is `event.position().toPoint()`.
+2. **`.keyboardModifiers()` → `.modifiers()`** — Qt6 removed `QDropEvent.keyboardModifiers()`;
+   the Ctrl-for-copy check in `_on_drop` must use `event.modifiers()`. This was a *second*,
+   latent defect surfaced only by driving a real `QDropEvent` through the filter — the
+   pre-existing mock-based tests masked it (a `MagicMock` auto-answers any attribute).
+
+   Verified on **Qt 6.11**: `QDragEnterEvent/QDragMoveEvent/QDropEvent` expose `position`
+   and `modifiers`; they do **not** expose `pos` or `keyboardModifiers`. (Note: the
+   constructors differ — `QDragEnterEvent(QPoint, …)` vs `QDropEvent(QPointF, …)` — but the
+   `.position()` accessor is uniform.)
+
+**Graceful failure:** Each of the three handlers is now wrapped in `try/except`. On any
+exception it logs (`logging.exception`) and fails cleanly — drag-enter/move call
+`event.ignore()`; drop calls `event.acceptProposedAction()` — so a bad drop **releases the
+cursor instead of hanging the UI**. Added `import logging`. (This wrapper is what turned the
+`keyboardModifiers` crash into a clean logged no-op, which is how the second bug was found.)
+
+**Audit / sweep results:**
+- `views/file_view.py:970` uses `event.pos()` on a **MouseMove** (`QMouseEvent`) event, not a
+  drag event — `QMouseEvent.pos()` is still present in PyQt6 (deprecated compat shim). Works;
+  left alone. The pane's actual DnD delegates to Qt natively (returns False; no `.pos()` in
+  the drop path).
+- `views/file_view.py:449` uses `QApplication.keyboardModifiers()` — a **static** method,
+  still valid. Left alone.
+- `views/dashboard_view.py` — no `.pos()`/`.globalPos()`/`.keyboardModifiers()`; pyflakes
+  clean (the prior `Path`-import hotfix holds).
+- Signal wiring confirmed: `sidebar_drop_requested = pyqtSignal(list, str, bool)` connects in
+  `file_manager_view.py:214` to `_on_sidebar_drop_requested(self, source_paths, target_dir,
+  copy)` — matching signature; TRASH_SENTINEL routes to a trash op, else `_on_drop_requested`.
+
+**Verification (offscreen, real Qt6 events through `eventFilter`):** DragEnter/DragMove over a
+valid dir → accepted; Drop (move) and Ctrl+Drop (copy) both emit
+`sidebar_drop_requested([file], target, copy)` correctly; Wastebin drop → `TRASH_SENTINEL`;
+off-tree/invalid target → not accepted, clean reject, no hang.
+
+**Test gap closed:** No test drove the drag handlers (that's why 580+ tests passed with the
+crash). Added `tests/test_sidebar_drag_drop.py` (+10): fake-event tests (event exposing only
+`.position()`/`.modifiers()`, never `.pos()`) for enter/move/drop accept-valid, reject-invalid,
+no-urls, Ctrl-copy vs move, no-emit-on-invalid, and graceful-failure (handler raises → ignore/
+accept, never propagates); plus one **real-Qt6-event** test that dispatches genuine
+`QDragEnterEvent`/`QDropEvent` through `eventFilter` — the strongest guard, catching any future
+revert of *either* the `pos()` or `keyboardModifiers()` migration. Also fixed the 3
+pre-existing Fix-4 tests in `tests/test_surgical_fix_pass.py` that had encoded the bug (mocked
+`.pos()`/`.keyboardModifiers()`) → now use `.position()` (QPointF) and `.modifiers()`.
+
+### Tests: 867/867 (+10 in `tests/test_sidebar_drag_drop.py`; 3 in `test_surgical_fix_pass.py` migrated to the Qt6 event API)
