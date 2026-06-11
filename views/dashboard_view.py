@@ -2,6 +2,7 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 
 import strings
 from backends.disk_scan_backend import DISK_CATEGORIES, DISK_FREE_COLOR, DiskScanWorker

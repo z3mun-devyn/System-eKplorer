@@ -1975,3 +1975,42 @@ not files. Do not attempt to merge these counts or share the assignment logic be
 `_load_file_tags()` refreshes BOTH left and right panes (via `_refresh_tags_for_view`).
 The right pane is only refreshed when `isVisible()` returns True (i.e., dual-pane mode is on
 and the browser stack page is active). Tag counts in the Packages sidebar are unaffected.
+
+---
+
+## HOTFIX — NameError crash entering Dashboard Advanced mode (`views/dashboard_view.py`)
+
+**Symptom:** Entering Dashboard → Advanced crashed with `NameError: name 'Path' is
+not defined`. Because `dashboard.view_mode` persists, Advanced-as-last-view turned this
+into a crash-loop on launch.
+
+**Root cause:** The "FIX 1 — SMART ZFS member resolution" pass added
+`_add_smart_device_rows`, whose multi-device branch builds a per-device label with
+`Path(device).name` (line ~992). `pathlib.Path` was never imported in
+`views/dashboard_view.py`. The NameError only fires on the SMART *finish* path
+(`_on_smart_finished` → `_add_smart_device_rows`), so it surfaced live but the suite
+never hit it.
+
+**Fix:**
+- Added `from pathlib import Path` to the imports of `views/dashboard_view.py`.
+- Verified the rest of the file for other use-before-import via `pyflakes`: the only
+  undefined name was `Path` (the lone remaining warning is a benign "f-string missing
+  placeholders" at line 429, pre-existing, not a crash). `subprocess`, `SmartData`,
+  `re`, `shutil`, `datetime` all already imported.
+- Confirmed the `devices_for_mount` LIST contract is honoured end-to-end:
+  `SmartBackend.devices_for_mount() → list[str]`; `_SmartWorker.run` iterates the list
+  and calls `get_data(device)` per device; `_on_smart_finished` fans out to
+  `_add_smart_device_rows`. No caller treats the return as a string. The `device_for_mount`
+  (singular) compat shim still returns `str | None`.
+
+**Verification:** Offscreen end-to-end smoke (`QT_QPA_PLATFORM=offscreen`): `import main`
+clean; `AdvancedDriveTile` constructs; `_on_smart_finished` with a multi-device result
+(PASSED + permission_denied) produces rows without raising; 5× construct/finish churn
+(Simple↔Advanced toggling) stable; `devices_for_mount("/")` returns a list.
+
+**Test gap closed:** Added `tests/test_dashboard_smart_rows.py` (+3) — the suite previously
+never drove the SMART finish path. New tests: `_add_smart_device_rows` with `multi=True`
+does not raise (the regression line); the `permission_denied` fallback renders label +
+how-to button; `_on_smart_finished` with >1 result (multi=True internally) does not raise.
+
+### Tests: 857/857 (+3 in `tests/test_dashboard_smart_rows.py`)
