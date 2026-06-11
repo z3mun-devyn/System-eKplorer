@@ -214,6 +214,107 @@ def test_load_file_tags_triggers_data_changed_on_col_tags(tmp_path, monkeypatch)
     )
 
 
+def test_load_file_tags_refreshes_both_panes(tmp_path, monkeypatch):
+    """_load_file_tags() refreshes tags on the right view when it is visible."""
+    from views.file_manager_view import FileManagerView
+    from views.file_view import _COL_TAGS
+    from models.file_entry import FileEntry
+
+    fmv = FileManagerView()
+
+    def _make_entry(path):
+        f = tmp_path / path
+        f.write_text("x")
+        return FileEntry(
+            name=f.name, path=f, size=1,
+            modified=f.stat().st_mtime,
+            mime_type="text/plain", is_dir=False, is_hidden=False,
+        )
+
+    fmv._left_view._model.set_entries([_make_entry("left.txt")])
+    fmv._right_view._model.set_entries([_make_entry("right.txt")])
+
+    left_changed: list = []
+    right_changed: list = []
+    fmv._left_view._model.dataChanged.connect(
+        lambda tl, br, _: left_changed.append((tl.column(), br.column()))
+    )
+    fmv._right_view._model.dataChanged.connect(
+        lambda tl, br, _: right_changed.append((tl.column(), br.column()))
+    )
+
+    monkeypatch.setattr(
+        "views.file_manager_view.FileTagRepository",
+        lambda: type("R", (), {"bulk_load": staticmethod(lambda _: {})})(),
+    )
+    monkeypatch.setattr(fmv._right_view, "isVisible", lambda: True)
+
+    fmv._load_file_tags()
+
+    assert any(c[0] == _COL_TAGS for c in left_changed), "left pane not refreshed"
+    assert any(c[0] == _COL_TAGS for c in right_changed), "right pane not refreshed"
+
+
+def test_load_file_tags_skips_invisible_right_pane(tmp_path, monkeypatch):
+    """_load_file_tags() does not touch the right view when it is hidden."""
+    from views.file_manager_view import FileManagerView
+    from models.file_entry import FileEntry
+
+    fmv = FileManagerView()
+
+    f = tmp_path / "right.txt"
+    f.write_text("x")
+    fmv._right_view._model.set_entries([FileEntry(
+        name=f.name, path=f, size=1,
+        modified=f.stat().st_mtime,
+        mime_type="text/plain", is_dir=False, is_hidden=False,
+    )])
+
+    right_changed: list = []
+    fmv._right_view._model.dataChanged.connect(
+        lambda *_: right_changed.append(True)
+    )
+
+    monkeypatch.setattr(
+        "views.file_manager_view.FileTagRepository",
+        lambda: type("R", (), {"bulk_load": staticmethod(lambda _: {})})(),
+    )
+    monkeypatch.setattr(fmv._right_view, "isVisible", lambda: False)
+
+    fmv._load_file_tags()
+
+    assert right_changed == [], "right pane was refreshed despite being hidden"
+
+
+def test_set_tag_map_data_changed_survives_proxy(tmp_path):
+    """dataChanged from set_tag_map on the source model is visible through the proxy."""
+    from views.file_view import FileView, _COL_TAGS
+    from models.file_entry import FileEntry
+    from models.tag import Tag
+
+    fv = FileView()
+    f = tmp_path / "doc.txt"
+    f.write_text("x")
+    entry = FileEntry(
+        name=f.name, path=f, size=1,
+        modified=f.stat().st_mtime,
+        mime_type="text/plain", is_dir=False, is_hidden=False,
+    )
+    fv._model.set_entries([entry])
+
+    # Listen on the PROXY's dataChanged (what the view actually sees)
+    proxy_changed: list[tuple[int, int]] = []
+    fv._proxy.dataChanged.connect(
+        lambda tl, br, _: proxy_changed.append((tl.column(), br.column()))
+    )
+
+    fv._model.set_tag_map({str(f): [Tag(name="work", color_hex="#e74c3c")]})
+
+    assert any(c[0] == _COL_TAGS and c[1] == _COL_TAGS for c in proxy_changed), (
+        f"proxy dataChanged not received for _COL_TAGS after set_tag_map; got {proxy_changed}"
+    )
+
+
 # ── Part 3: chmod generation guard ────────────────────────────────────────────
 
 def _make_pp():

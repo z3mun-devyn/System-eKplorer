@@ -1865,3 +1865,23 @@ In "used" mode `_SegmentedPieWidget` divides by `total - free` and omits the fre
 entirely — category proportions fill the full ring. In "total" mode free-space color
 changed from `#1C2833` to `DISK_FREE_COLOR = "#34495E"` (visible slate).
 `DISK_FREE_COLOR` defined in `disk_scan_backend.py` as the single source of truth.
+
+---
+
+## ARCHITECTURE NOTE: file tags vs package tags are separate junctions
+
+Both use the shared `tags` table (`name TEXT PRIMARY KEY`, `color_hex`). Assignments live in
+**two independent junction tables**:
+
+| Junction table | Key | Owner |
+|---|---|---|
+| `package_tags(package_source, package_name, tag_name)` | `(source, name)` | Packages view |
+| `file_tags(path, tag_name)` | `(path)` | File Manager view |
+
+**File tags are NOT wired into the package list and package tags are NOT shown in the FM.**
+The `(0)` next to a tag name in the Packages sidebar correctly counts packages with that tag,
+not files. Do not attempt to merge these counts or share the assignment logic between views.
+
+`_load_file_tags()` refreshes BOTH left and right panes (via `_refresh_tags_for_view`).
+The right pane is only refreshed when `isVisible()` returns True (i.e., dual-pane mode is on
+and the browser stack page is active). Tag counts in the Packages sidebar are unaffected.

@@ -985,14 +985,17 @@ class FileManagerView(QWidget):
         self._left_view.set_paste_enabled(enabled)
         self._right_view.set_paste_enabled(enabled)
 
-    def _load_file_tags(self) -> None:
-        """Bulk-load tags for the current directory entries and push to the left view."""
-        entries = self._left_view._model._entries
+    def _refresh_tags_for_view(self, view) -> None:
+        entries = view._model._entries
         if not entries:
             return
-        paths = [str(e.path) for e in entries]
-        tag_map = FileTagRepository().bulk_load(paths)
-        self._left_view.set_tag_map(tag_map)
+        tag_map = FileTagRepository().bulk_load([str(e.path) for e in entries])
+        view.set_tag_map(tag_map)
+
+    def _load_file_tags(self) -> None:
+        self._refresh_tags_for_view(self._left_view)
+        if self._right_view is not None and self._right_view.isVisible():
+            self._refresh_tags_for_view(self._right_view)
 
     def _open_file_tag_modal(self, entries: list[FileEntry]) -> None:
         if not entries:

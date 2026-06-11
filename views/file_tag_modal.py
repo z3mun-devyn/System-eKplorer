@@ -149,12 +149,12 @@ class FileTagModal(QDialog):
 
         # Subtitle
         subtitle = QLabel(strings.FT_MODAL_SUBTITLE)
-        subtitle.setStyleSheet("color: palette(mid); font-size: 10px;")
+        subtitle.setStyleSheet("color: palette(text); font-size: 10px;")
         outer.addWidget(subtitle)
 
         # ── Assign section ───────────────────────────────────────────────────
         assign_lbl = QLabel(strings.FT_ASSIGN_HEADER)
-        assign_lbl.setStyleSheet("color: palette(mid); font-size: 10px;")
+        assign_lbl.setStyleSheet("color: palette(text); font-size: 10px;")
         outer.addWidget(assign_lbl)
 
         self._no_tags_label = QLabel(strings.FT_NO_TAGS_MSG)
@@ -184,11 +184,12 @@ class FileTagModal(QDialog):
 
         # ── Create section ───────────────────────────────────────────────────
         create_lbl = QLabel(strings.FT_CREATE_HEADER)
-        create_lbl.setStyleSheet("color: palette(mid); font-size: 10px;")
+        create_lbl.setStyleSheet("color: palette(text); font-size: 10px;")
         outer.addWidget(create_lbl)
 
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText(strings.TAG_EDITOR_NAME_PLACEHOLDER)
+        self._name_edit.setStyleSheet("QLineEdit { color: palette(text); }")
         outer.addWidget(self._name_edit)
 
         color_container = QWidget()
