@@ -2074,3 +2074,42 @@ pre-existing Fix-4 tests in `tests/test_surgical_fix_pass.py` that had encoded t
 `.pos()`/`.keyboardModifiers()`) → now use `.position()` (QPointF) and `.modifiers()`.
 
 ### Tests: 867/867 (+10 in `tests/test_sidebar_drag_drop.py`; 3 in `test_surgical_fix_pass.py` migrated to the Qt6 event API)
+
+---
+
+## INVESTIGATION — "file-tag pills need a restart": NOT a current bug (already fixed in `5b6292e`)
+
+**Report:** Tagging a file only showed pills after an app restart. Prime suspect was a
+commit-ordering race in `FileTagModal._on_save` — emitting `saved` (→ `_load_file_tags` →
+`bulk_load`) while the DB write was still in an open transaction, so the refresh read empty
+rows.
+
+**Diagnosed the live path end-to-end with stderr instrumentation + an offscreen repro that
+drives the real `FileManagerView` (threaded dir-load → modal → `_on_save` → `saved` →
+`_load_file_tags`). The race does not exist; the current code is correct:**
+
+| Probe | Finding |
+|---|---|
+| (a) post-commit `bulk_load` right after save | **NON-EMPTY** — `{'/…/target.txt': ['urgent']}`. Data is durable before emit. |
+| (b) `saved` slot (`_load_file_tags`) fires after save | **Yes**, fires synchronously in `_on_save`. |
+| (c) DB committed before `saved.emit()` | **Yes.** `open_db()` is a contextmanager that calls `conn.commit()` on exit (`models/database.py:139`); `set_assignments` returns only after commit. **The hypothesised race is impossible.** |
+| (d) model identity | `id(view._model) == id(view._tree.model().sourceModel())` — the refresh pushes to the *displayed* source model, not an offscreen one. |
+
+**Root cause of the original symptom:** it was a real bug, but it was already fixed by commit
+**`5b6292e` ("fix: file-tag live refresh for dual pane")**, which introduced
+`_refresh_tags_for_view(view)` + a both-pane `_load_file_tags` (left always; right when
+`isVisible()`). Combined with `open_db()` committing before `saved` emits, the live refresh
+works. The task's prescribed helper is the code that is *already in the tree* — no further
+source change was needed (views are byte-for-byte unchanged this pass).
+
+**Behaviour verified (offscreen, real `FileManagerView`, pinned to a temp file):** new tag →
+pills appear immediately; existing tag re-save → persists; untag → pills vanish immediately;
+dual-pane → **both** left and right panes update immediately. All without restart.
+
+**Test gap closed:** no test had covered the commit-before-emit invariant. Added
+`tests/test_file_tag_live_refresh.py` (+3): a fresh `FileTagRepository` connection (only sees
+committed rows) already sees the new assignment *inside the `saved` slot*; the untag case is
+likewise committed before emit; and `saved` fires exactly once. If anyone reorders `_on_save`
+to emit before the `open_db` commit, these fail.
+
+### Tests: 870/870 (+3 in `tests/test_file_tag_live_refresh.py`)
