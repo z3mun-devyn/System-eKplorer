@@ -208,8 +208,8 @@ class LabelModal(QDialog):
         for btn in self._swatch_buttons:
             color = btn.property("swatch_color")
             selected = color == self._selected_color
-            border = "3px solid #ffffff" if selected else "2px solid transparent"
-            outline = "2px solid #000000" if selected else "none"
+            border = "3px solid palette(highlight)" if selected else "2px solid transparent"
+            outline = "2px solid palette(highlighted-text)" if selected else "none"
             btn.setStyleSheet(
                 f"QPushButton {{"
                 f"  background-color: {color};"

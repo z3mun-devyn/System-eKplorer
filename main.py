@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import skin_manager
 import strings
 from backends.settings_backend import SettingsRepository
 from views.clipboard_view import ClipboardView
@@ -326,6 +327,10 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName(strings.APP_TITLE)
+
+    # Snapshot the theme-native style + palette before any skin can override it,
+    # so "Off" can restore the exact launch appearance. No auto-load yet (M11 P1).
+    skin_manager.capture_baseline(app)
 
     # Single-instance guard: if another eKplorer is running, hand off and exit.
     if _try_become_secondary(_SOCKET_NAME, path_arg):

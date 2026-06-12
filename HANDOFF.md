@@ -5,6 +5,35 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 P1: Core palette engine (mechanism only — no skins, TOML, or UI yet).
+  New module skin_manager.py (sibling to theme.py), a pure runtime palette
+  controller with no settings/UI deps. Skinning = override the active
+  QApplication palette; theme.py and all palette(...) QSS refs follow it.
+  API: capture_baseline(app) snapshots style().objectName() + a copy of
+  app.palette() into module state (call ONCE at startup before any skin);
+  build_palette(role_map, base)->QPalette copies base and sets the 9 read
+  roles present in the flat {name:"#hex"} map on the Normal group
+  (window, window_text, base, text, alternate_base, mid, dark, highlight,
+  highlighted_text), then DERIVES the non-read roles native Fusion widgets
+  paint with — Button←Window, ButtonText←WindowText, ToolTipBase←AlternateBase,
+  ToolTipText←Text, PlaceholderText←Mid, Link←Highlight, BrightText←HighlightedText
+  (each overridable via an explicit key; Disabled group left to Fusion auto-dim
+  for v1); apply_skin(app, role_map) does setStyle("Fusion") +
+  setPalette(build_palette(role_map, baseline)) — always builds from baseline so
+  applies don't stack; restore_baseline(app) replays the captured style+palette
+  (this is what "Off" calls). main.py calls skin_manager.capture_baseline(app)
+  immediately after QApplication construction, before the window shows — no
+  auto-load. Hardcode fix: dashboard_view.py:211-212 (LabelModal swatch selection
+  ring) was QSS, so #ffffff border → palette(highlight) and #000000 outline →
+  palette(highlighted-text); it now follows the skin. Manually confirmed
+  offscreen: baseline #efefef/fusion → dark-red skin #0a0a0a/fusion →
+  restore back to exactly #efefef/fusion (clean round trip, no residual tint).
+  +13 tests (test_skin_manager.py): 9 read roles set from dict, 7 derived roles
+  follow source when absent, explicit derived-key override, base copy preserves
+  unset roles, restore_baseline round trip. GUI apply/restore repaint is verified
+  manually, not unit-tested. Out of scope this pass: terminal_view.py (fixed
+  terminal theme), status/data-viz hardcodes, configure_dialog, Appearance page.
+
 - Column-stretch fix: Name column is ResizeMode.Stretch (absorbs all slack,
   fills window width). Icon stays Fixed at 36px. All other columns
   (Tags/Category/Source/Version/Size/Installed On) are Interactive with
