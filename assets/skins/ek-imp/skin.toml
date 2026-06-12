@@ -1,0 +1,28 @@
+# eK-imp skin — M11 P2. PLACEHOLDER palette (tune to the wallpaper later).
+[meta]
+schema = 1
+id = "ek-imp"
+name = "eK-imp"
+description = "Neutral dark skin paired with the eK-imp wallpaper."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#2b2b2b"
+window_text = "#e8e8e8"
+base = "#1f1f1f"
+text = "#e8e8e8"
+alternate_base = "#353535"
+mid = "#555555"
+dark = "#141414"
+highlight = "#5a7fb5"
+highlighted_text = "#ffffff"
+
+# Parsed but NOT painted this pass (P4 owns background rendering).
+[background]
+image = "bg.png"
+mode = "cover"
+
+[[attribution]]
+text = "Original eKplorer artwork."
+note = "in-house"

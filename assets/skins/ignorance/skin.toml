@@ -1,0 +1,27 @@
+# Ignorance skin — M11 P2. PLACEHOLDER palette (tune to the wallpaper later).
+[meta]
+schema = 1
+id = "ignorance"
+name = "Ignorance"
+description = "Near-black skin with a purple accent."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#101012"
+window_text = "#c8c8cc"
+base = "#0a0a0c"
+text = "#c8c8cc"
+alternate_base = "#18181c"
+mid = "#3a3a40"
+dark = "#050506"
+highlight = "#8e44ad"
+highlighted_text = "#ffffff"
+
+[background]
+image = "bg.png"
+mode = "cover"
+
+[[attribution]]
+text = "\"Ignorance\" wallpaper."
+note = "placeholder credit — confirm before release"

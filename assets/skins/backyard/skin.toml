@@ -1,0 +1,27 @@
+# Backyard skin — M11 P2. PLACEHOLDER palette (tune to the wallpaper later).
+[meta]
+schema = 1
+id = "backyard"
+name = "Backyard"
+description = "Natural green skin from the Swiss backyard photograph."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#1c2a1c"
+window_text = "#e4ecdf"
+base = "#142014"
+text = "#e4ecdf"
+alternate_base = "#283a28"
+mid = "#4f6b4f"
+dark = "#0b110b"
+highlight = "#4caf50"
+highlighted_text = "#0a140a"
+
+[background]
+image = "bg.png"
+mode = "cover"
+
+[[attribution]]
+text = "\"Swiss Backyard\" photograph by the original photographer."
+note = "used with permission — placeholder credit, confirm before release"

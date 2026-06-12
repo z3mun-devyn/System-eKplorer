@@ -5,6 +5,47 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 P2: Skin data + persistence + autoload (NO Configure UI — that's P3).
+  STATUS: DONE, proven from a Python console (no GUI/menu needed). Skins now load
+  from disk and self-apply at startup, driven by settings. Continues on branch
+  m11-p1-palette-engine (still NOT merged to main; engine+UI land together).
+  New module skin_loader.py (sibling to skin_manager.py, no Qt/UI):
+  * Skin dataclass {id, name, description, version, author, palette: dict|None,
+    background: dict|None, attribution: list}.
+  * parse_skin(folder) reads folder/skin.toml via tomllib (stdlib). SUPPORTED_SCHEMA=1
+    — refuses (None + log) on missing/unreadable/malformed TOML, missing [meta], or
+    schema > supported. Missing [palette] → palette=None (allowed). A role with bad
+    hex is dropped (regex-validated #RGB/#RRGGBB/#RRGGBBAA), others kept, warning
+    logged. Unknown blocks (e.g. [sounds]) ignored. [background] parsed but NEVER
+    painted (P4 owns rendering).
+  * discover_skins(bundled_dir=, user_dir=) scans assets/skins/*/skin.toml then
+    ~/.config/ekplorer/skins/*/skin.toml; user wins on id collision (logged, bundled
+    list position preserved); always prepends a synthetic id="off" entry (palette
+    None = baseline). Dirs are params for testability; default to the real paths.
+  * resolve_role_map(active_id, skins, override_lookup=None) → role_map | None:
+    None/""/"off"/unknown-id/palette-less all return None (caller keeps baseline);
+    otherwise the skin palette with any per-role override values layered on top.
+  Six PNGs in assets/skins/ promoted to per-skin folders (eKplorer_1→ek-imp/bg.png,
+  TWMAF1→twmaf1, TWMAF2→twmaf2, igno→ignorance, clockwork→clockwork,
+  swissbackyard→backyard), each with an authored skin.toml: [meta] + a 9-role
+  [palette] (PLACEHOLDER colors — engine correctness now, final art later) +
+  [background] image=bg.png + [[attribution]]. Attribution honors the roster:
+  twmaf2 explicitly labeled "NOT the official Hong Kong emblem"; clockwork/backyard
+  credit the photographer + "used with permission" (all marked placeholder-confirm).
+  main.py autoload: after skin_manager.capture_baseline(app), _autoload_active_skin()
+  reads SettingsRepository "appearance.active_skin"; None/"off" → baseline; a real id
+  → discover_skins + resolve_role_map + skin_manager.apply_skin (overlaying any
+  "appearance.override.<id>.<role>" keys); missing id or palette-less → baseline +
+  log, no crash. The fn takes an optional injected SettingsRepository (test seam).
+  NO writes to active_skin this pass (P3's save), NO Configure UI, NO bg painting.
+  Console-confirmed: discover ids = off+6; bad-hex drops one role keeps rest; bad
+  schema refused; active_skin="twmaf1" launches in #1a2230 WITHOUT keypress; "off"
+  and nonexistent id → baseline. +18 tests (test_skin_loader.py): parse good/
+  missing-palette/bad-hex/bad-schema/missing-toml/malformed/unknown-block; discover
+  synthetic-off-first + user-wins merge + real bundled set; resolve_role_map cases +
+  override layering; autoload applies stored skin & falls back on missing id. Full
+  suite 901 passing.
+
 - M11 P1: Core palette engine (mechanism only — no skins, TOML, or UI yet).
   STATUS: DONE, mechanism proven on a real Plasma display (Ctrl+Shift+K applied
   the dark-red skin live — whole app incl. packages sidebar went dark-red;

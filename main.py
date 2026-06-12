@@ -1,10 +1,13 @@
 """System eKplorer — entry point."""
 
+import logging
 import os
 import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -20,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import skin_loader
 import skin_manager
 import strings
 from backends.settings_backend import SettingsRepository
@@ -310,6 +314,28 @@ def _try_become_secondary(socket_name: str, path_arg: str) -> bool:
     return False
 
 
+# ── Skin autoload ─────────────────────────────────────────────────────────────
+
+def _autoload_active_skin(app, settings: SettingsRepository | None = None) -> None:
+    """Apply the persisted ``appearance.active_skin`` at startup, if set.
+
+    Leaves the captured baseline untouched when the setting is unset, "off",
+    points at a skin no longer on disk, or names a palette-less skin (each logged,
+    never crashes). Per-skin ``appearance.override.<id>.<role>`` keys are layered
+    on top of the skin's palette. No settings are written here — that's P3.
+    """
+    settings = settings or SettingsRepository()
+    active = settings.get("appearance.active_skin")
+    role_map = skin_loader.resolve_role_map(
+        active,
+        skin_loader.discover_skins(),
+        override_lookup=lambda role: settings.get(
+            f"appearance.override.{active}.{role}"),
+    )
+    if role_map is not None:
+        skin_manager.apply_skin(app, role_map)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -329,8 +355,11 @@ def main() -> None:
     app.setApplicationName(strings.APP_TITLE)
 
     # Snapshot the theme-native style + palette before any skin can override it,
-    # so "Off" can restore the exact launch appearance. No auto-load yet (M11 P1).
+    # so "Off" can restore the exact launch appearance.
     skin_manager.capture_baseline(app)
+
+    # Auto-apply the persisted skin (if any) before the window shows (M11 P2).
+    _autoload_active_skin(app)
 
     # Single-instance guard: if another eKplorer is running, hand off and exit.
     if _try_become_secondary(_SOCKET_NAME, path_arg):

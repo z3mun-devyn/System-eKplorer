@@ -1,0 +1,27 @@
+# TWMAF 1 skin — M11 P2. PLACEHOLDER palette (tune to the wallpaper later).
+[meta]
+schema = 1
+id = "twmaf1"
+name = "TWMAF 1"
+description = "Cool slate-blue skin with a warm red accent."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#1a2230"
+window_text = "#d7e0ea"
+base = "#121823"
+text = "#d7e0ea"
+alternate_base = "#232f42"
+mid = "#46566e"
+dark = "#0b0f16"
+highlight = "#c0392b"
+highlighted_text = "#ffffff"
+
+[background]
+image = "bg.png"
+mode = "cover"
+
+[[attribution]]
+text = "Artwork from the TWMAF series."
+note = "placeholder credit — confirm before release"

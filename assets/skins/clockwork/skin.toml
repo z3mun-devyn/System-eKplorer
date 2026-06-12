@@ -1,0 +1,27 @@
+# Clockwork skin — M11 P2. PLACEHOLDER palette (tune to the wallpaper later).
+[meta]
+schema = 1
+id = "clockwork"
+name = "Clockwork"
+description = "Warm brass-and-sepia skin."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#2b2419"
+window_text = "#ecdcc0"
+base = "#201b12"
+text = "#ecdcc0"
+alternate_base = "#3a3122"
+mid = "#6b5a3e"
+dark = "#14100a"
+highlight = "#b8860b"
+highlighted_text = "#1a1408"
+
+[background]
+image = "bg.png"
+mode = "cover"
+
+[[attribution]]
+text = "Photograph by the original photographer."
+note = "used with permission — placeholder credit, confirm before release"

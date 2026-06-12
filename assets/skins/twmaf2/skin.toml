@@ -1,0 +1,27 @@
+# TWMAF 2 skin — M11 P2. PLACEHOLDER palette (tune to the wallpaper later).
+[meta]
+schema = 1
+id = "twmaf2"
+name = "TWMAF 2"
+description = "Deep magenta skin with a vivid pink accent."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#2a1620"
+window_text = "#f0dde6"
+base = "#1d0f16"
+text = "#f0dde6"
+alternate_base = "#3a1f2d"
+mid = "#6b4150"
+dark = "#120810"
+highlight = "#d81b60"
+highlighted_text = "#ffffff"
+
+[background]
+image = "bg.png"
+mode = "cover"
+
+[[attribution]]
+text = "Stylized regional motif — NOT the official Hong Kong emblem."
+note = "placeholder credit — confirm before release"
