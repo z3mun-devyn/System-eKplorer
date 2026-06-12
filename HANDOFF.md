@@ -6,6 +6,13 @@
 
 ## Completed milestones
 - M11 P1: Core palette engine (mechanism only — no skins, TOML, or UI yet).
+  STATUS: DONE, mechanism proven on a real Plasma display (Ctrl+Shift+K applied
+  the dark-red skin live — whole app incl. packages sidebar went dark-red;
+  Ctrl+Shift+J restored). The temporary M11_EYEBALL QShortcut harness used for
+  that check has been fully removed from main.py (no env gate, shortcuts, or
+  prints remain — only the real wiring: import skin_manager + capture_baseline).
+  Lives on branch m11-p1-palette-engine; NOT merged to main yet — holding so the
+  engine + Appearance UI (P2/P3) land together.
   New module skin_manager.py (sibling to theme.py), a pure runtime palette
   controller with no settings/UI deps. Skinning = override the active
   QApplication palette; theme.py and all palette(...) QSS refs follow it.
