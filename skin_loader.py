@@ -45,6 +45,7 @@ class Skin:
     palette: dict[str, str] | None = None
     background: dict | None = None
     attribution: list = field(default_factory=list)
+    path: Path | None = None  # source folder, for resolving assets like bg.png
 
 
 def _off_skin() -> Skin:
@@ -134,6 +135,7 @@ def parse_skin(folder) -> Skin | None:
         palette=palette,
         background=background,
         attribution=_normalize_attribution(data.get("attribution")),
+        path=folder,
     )
 
 

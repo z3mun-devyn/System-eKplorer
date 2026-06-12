@@ -593,6 +593,7 @@ CONFIGURE_CAT_GENERAL       = "General"
 CONFIGURE_CAT_FILE_MANAGER  = "File Manager"
 CONFIGURE_CAT_CLIPBOARD     = "Clipboard"
 CONFIGURE_CAT_SYSTEM        = "System"
+CONFIGURE_CAT_APPEARANCE    = "Appearance"
 CONFIGURE_CAT_ABOUT         = "About"
 CONFIGURE_STARTUP_TAB       = "Startup tab:"
 CONFIGURE_FM_DEFAULT_VIEW   = "Default view:"
@@ -662,6 +663,12 @@ FT_DELETE_TAG_BODY  = "This will remove the tag from all assigned files and pack
 
 # ── Configure — appearance ────────────────────────────────────────────────────
 CONFIGURE_REDUCE_ANIM = "Reduce animations"
+CONFIGURE_APPEARANCE_SKIN_LABEL = "Skin:"
+CONFIGURE_APPEARANCE_HINT = (
+    "Pick a skin to preview it live. Click OK to keep it, Cancel to revert."
+)
+CONFIGURE_APPEARANCE_NO_PREVIEW = "(no preview)"
+CONFIGURE_APPEARANCE_ATTRIBUTION = "Attribution:"
 
 # ── Drive tile rename ─────────────────────────────────────────────────────────
 ACTION_RENAME_DRIVE = "✎"

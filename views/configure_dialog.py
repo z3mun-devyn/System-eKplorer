@@ -9,11 +9,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import skin_loader
+import skin_manager
 import strings
 from backends.settings_backend import SettingsRepository
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -52,7 +54,8 @@ _CAT_FILE_MANAGER = 1
 _CAT_DASHBOARD    = 2
 _CAT_CLIPBOARD    = 3
 _CAT_SYSTEM       = 4
-_CAT_ABOUT        = 5
+_CAT_APPEARANCE   = 5
+_CAT_ABOUT        = 6
 
 
 class ConfigureDialog(QDialog):
@@ -104,6 +107,7 @@ class ConfigureDialog(QDialog):
             ("utilities-system-monitor", strings.CONFIGURE_CAT_DASHBOARD),
             ("edit-paste",          strings.CONFIGURE_CAT_CLIPBOARD),
             ("preferences-desktop", strings.CONFIGURE_CAT_SYSTEM),
+            ("preferences-desktop-theme", strings.CONFIGURE_CAT_APPEARANCE),
             ("help-about",          strings.CONFIGURE_CAT_ABOUT),
         ]
         for icon_name, label in _categories:
@@ -118,6 +122,7 @@ class ConfigureDialog(QDialog):
         self._stack.addWidget(self._build_dashboard_page())
         self._stack.addWidget(self._build_clipboard_page())
         self._stack.addWidget(self._build_system_page())
+        self._stack.addWidget(self._build_appearance_page())
         self._stack.addWidget(self._build_about_page())
         body.addWidget(self._stack, stretch=1)
 
@@ -285,6 +290,124 @@ class ConfigureDialog(QDialog):
 
         return page
 
+    def _build_appearance_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        hint = QLabel(strings.CONFIGURE_APPEARANCE_HINT)
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(mid);")
+        layout.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.setSpacing(16)
+
+        # Left: the list of skins (synthetic "off" first, then bundled/user).
+        self._skins = skin_loader.discover_skins()
+        self._skin_list = QListWidget()
+        self._skin_list.setFixedWidth(180)
+        for skin in self._skins:
+            item = QListWidgetItem(skin.name)
+            item.setData(Qt.ItemDataRole.UserRole, skin.id)
+            self._skin_list.addItem(item)
+        self._skin_list.currentRowChanged.connect(self._on_skin_row_changed)
+        row.addWidget(self._skin_list)
+
+        # Right: live preview panel.
+        preview = QVBoxLayout()
+        preview.setSpacing(6)
+
+        self._skin_thumb = QLabel(strings.CONFIGURE_APPEARANCE_NO_PREVIEW)
+        self._skin_thumb.setFixedSize(260, 150)
+        self._skin_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._skin_thumb.setStyleSheet(
+            "QLabel { border: 1px solid palette(mid); color: palette(mid); }"
+        )
+        preview.addWidget(self._skin_thumb)
+
+        self._skin_name = QLabel()
+        nf = QFont()
+        nf.setBold(True)
+        self._skin_name.setFont(nf)
+        preview.addWidget(self._skin_name)
+
+        self._skin_desc = QLabel()
+        self._skin_desc.setWordWrap(True)
+        preview.addWidget(self._skin_desc)
+
+        self._skin_attrib = QLabel()
+        self._skin_attrib.setWordWrap(True)
+        self._skin_attrib.setStyleSheet("color: palette(mid); font-size: 10px;")
+        preview.addWidget(self._skin_attrib)
+
+        preview.addStretch()
+        row.addLayout(preview, stretch=1)
+        layout.addLayout(row)
+        return page
+
+    # ── Appearance preview helpers ─────────────────────────────────────────────
+
+    def _on_skin_row_changed(self, row: int) -> None:
+        if row < 0 or row >= len(self._skins):
+            return
+        skin = self._skins[row]
+        self._apply_skin_preview(skin.id)
+        self._update_skin_preview_panel(skin)
+
+    def _apply_skin_preview(self, skin_id: str) -> None:
+        """Apply a skin to the whole app for live preview (or restore baseline)."""
+        app = QApplication.instance()
+        if app is None:
+            return
+        role_map = skin_loader.resolve_role_map(
+            skin_id,
+            self._skins,
+            override_lookup=lambda role: self._settings.get(
+                f"appearance.override.{skin_id}.{role}"),
+        )
+        if role_map is None:
+            skin_manager.restore_baseline(app)
+        else:
+            skin_manager.apply_skin(app, role_map)
+
+    def _update_skin_preview_panel(self, skin) -> None:
+        self._skin_name.setText(skin.name)
+        self._skin_desc.setText(skin.description)
+
+        if skin.attribution:
+            parts = []
+            for entry in skin.attribution:
+                text = entry.get("text", "")
+                note = entry.get("note", "")
+                parts.append(f"{text} ({note})" if note else text)
+            self._skin_attrib.setText(
+                f"{strings.CONFIGURE_APPEARANCE_ATTRIBUTION} " + " · ".join(parts)
+            )
+        else:
+            self._skin_attrib.clear()
+
+        pixmap = None
+        if skin.path is not None and skin.background:
+            image = skin.background.get("image")
+            if image:
+                img_path = Path(skin.path) / image
+                if img_path.is_file():
+                    pm = QPixmap(str(img_path))
+                    if not pm.isNull():
+                        pixmap = pm.scaled(
+                            self._skin_thumb.width(),
+                            self._skin_thumb.height(),
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+        if pixmap is not None:
+            self._skin_thumb.setPixmap(pixmap)
+        else:
+            self._skin_thumb.clear()
+            self._skin_thumb.setText(strings.CONFIGURE_APPEARANCE_NO_PREVIEW)
+
     def _build_about_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -362,6 +485,14 @@ class ConfigureDialog(QDialog):
                 pass
         self._cb_spinbox.setValue(max_e)
 
+        # Appearance — select the active skin and remember it for Cancel revert.
+        self._original_skin_id = self._settings.get("appearance.active_skin") or "off"
+        target_row = next(
+            (i for i, s in enumerate(self._skins) if s.id == self._original_skin_id),
+            0,
+        )
+        self._skin_list.setCurrentRow(target_row)
+
     def _on_ok(self) -> None:
         # General
         startup_key = _STARTUP_TAB_KEYS[self._startup_combo.currentIndex()]
@@ -388,7 +519,20 @@ class ConfigureDialog(QDialog):
         # Clipboard
         self._settings.set("clipboard.max_entries", str(self._cb_spinbox.value()))
 
+        # Appearance — the selected skin is already applied live; persist the choice.
+        selected = self._skin_list.currentItem()
+        if selected is not None:
+            self._settings.set(
+                "appearance.active_skin",
+                selected.data(Qt.ItemDataRole.UserRole),
+            )
+
         self.accept()
+
+    def reject(self) -> None:
+        # Revert any live skin preview to whatever was active when the dialog opened.
+        self._apply_skin_preview(getattr(self, "_original_skin_id", "off"))
+        super().reject()
 
     # ── System page ───────────────────────────────────────────────────────────
 

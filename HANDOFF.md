@@ -5,6 +5,34 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 P3: Appearance page in the Configure dialog (the skin picker UI + save).
+  STATUS: DONE, tests green; not yet eyeballed on a real display. Continues on
+  branch m11-p1-palette-engine (still NOT merged to main).
+  configure_dialog.py: inserted an "Appearance" category BETWEEN System and About
+  (recon-confirmed safe). Constants renumbered _CAT_APPEARANCE=5, _CAT_ABOUT=6;
+  _categories addItem ("preferences-desktop-theme") + _stack page inserted in
+  lockstep so list-row index still maps 1:1 to stack index. Nothing opened the
+  dialog to a fixed non-zero index, so the renumber broke nothing (full suite passes).
+  Appearance page: left QListWidget of skins from skin_loader.discover_skins()
+  (synthetic "off" first, then bundled); right preview panel = bg.png thumbnail
+  (scaled, KeepAspectRatio) + name + description + attribution line. Selecting a
+  row LIVE-previews app-wide via skin_manager (resolve_role_map → apply_skin, or
+  restore_baseline for "off"), layering appearance.override.<id>.<role> like
+  autoload does. OK persists appearance.active_skin (this is P2's deferred "save");
+  the skin is already applied so it just sticks. Cancel/Esc/X (reject() override)
+  reverts the live preview to the skin that was active when the dialog opened
+  (_original_skin_id, captured in _load_settings) and does NOT persist. On open,
+  _load_settings selects the stored active_skin's row (defaults to off/row 0).
+  skin_loader.Skin gained a `path` field (source folder) so the dialog can resolve
+  bg.png; parse_skin sets it. skin_manager untouched (consumed, not edited).
+  Scope note: the dialog shows a small bg.png THUMBNAIL for picking — this is UI,
+  distinct from P4's live background PAINTING in the main window, which is still
+  not done. strings: CONFIGURE_CAT_APPEARANCE + CONFIGURE_APPEARANCE_* added.
+  +6 tests (test_appearance_page.py): category inserted before About (constants +
+  7 rows/pages), skin list off-first + bundled present, select applies live + OK
+  persists, Cancel reverts to original + doesn't persist, "off" restores baseline,
+  load selects stored row. Full suite 907 passing. NO background painting (P4).
+
 - M11 P2: Skin data + persistence + autoload (NO Configure UI — that's P3).
   STATUS: DONE, proven from a Python console (no GUI/menu needed). Skins now load
   from disk and self-apply at startup, driven by settings. Continues on branch
