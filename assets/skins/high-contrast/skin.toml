@@ -1,0 +1,23 @@
+# High Contrast — accessibility skin. No wallpaper, no scrim: pure palette.
+[meta]
+schema = 1
+id = "high-contrast"
+name = "High Contrast"
+description = "Maximum-contrast accessibility theme: black surfaces, white text, yellow selection."
+version = "0.1.0"
+author = "eKplorer"
+
+[palette]
+window = "#000000"
+window_text = "#ffffff"
+base = "#000000"
+text = "#ffffff"
+alternate_base = "#0a0a0a"
+mid = "#ffffff"
+dark = "#000000"
+highlight = "#ffff00"
+highlighted_text = "#000000"
+
+[[attribution]]
+author = "Devyn Genjima"
+source = "Accessibility — high contrast"

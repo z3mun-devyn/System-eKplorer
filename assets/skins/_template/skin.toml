@@ -1,0 +1,56 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  eKplorer skin template
+# ────────────────────────────────────────────────────────────────────────────
+#  Copy this folder to assets/skins/<your-id>/ (or to
+#  ~/.config/ekplorer/skins/<your-id>/) and edit the values below.
+#
+#  ⚠  CRITICAL: Colors come from the [palette] block below, NOT from the image.
+#     Swapping bg.png alone leaves the whole UI tinted by the OLD palette —
+#     edit BOTH the wallpaper AND the palette together.
+#
+#  Folders whose name starts with "_" (like this one) are IGNORED by the loader,
+#  so this template never shows up as a selectable skin.
+# ════════════════════════════════════════════════════════════════════════════
+
+[meta]
+schema      = 1                 # skin format version — leave at 1
+id          = "my-skin"         # unique id (lowercase, no spaces); also the folder name
+name        = "My Skin"         # label shown in the Appearance dropdown
+description = "One line describing the look."
+version     = "0.1.0"
+author      = "Your Name"
+
+# ── Palette: the 9 roles that drive EVERY surface and text colour ────────────
+#  Hex strings (#rgb, #rrggbb, or #rrggbbaa). A bad hex drops just that role.
+[palette]
+window           = "#1e1e1e"   # default window background (panels, toolbars)
+window_text      = "#e8e8e8"   # default text on window background
+base             = "#161616"   # text-entry / list / file-view background (and scrim colour)
+text             = "#e8e8e8"   # text on base (file names) — must contrast with `base`
+alternate_base   = "#242424"   # sidebar / breadcrumb / modal bars; alternating rows
+mid              = "#555555"   # borders, separators, muted/secondary text
+dark             = "#0e0e0e"   # deepest shade — outlines, gauge ticks
+highlight        = "#5a7fb5"   # selection background
+highlighted_text = "#ffffff"   # text on a selection — must contrast with `highlight`
+
+# ── Background wallpaper (OPTIONAL — delete this block for a flat skin) ───────
+#  Drop your own image in this folder as bg.png (any size; it is cover-cropped).
+[background]
+image    = "bg.png"   # filename relative to this folder
+scaling  = "cover"    # cover (fill+crop) | contain (fit+letterbox) | stretch (distort)
+opacity  = 1.0        # 0.0–1.0 — how strongly the wallpaper shows
+scrim    = 0.70       # 0.0–1.0 — palette(base) veil behind file rows for legibility.
+                      # Higher = more readable text, less wallpaper showing through rows.
+                      # Leave at 0.70 unless your art is already dark/quiet behind text.
+
+# ── Attribution (CC-style fields; shown on the Appearance page) ──────────────
+[[attribution]]
+author   = "Photographer / Artist"
+source   = "Where it came from"
+url      = "https://example.com/the-work"
+license  = "CC BY 4.0"
+modified = "Recoloured / cropped for eKplorer"
+
+# ── Reserved for future use — not read yet, kept here so authors know it's coming.
+# [sounds]
+# navigate = "click.wav"

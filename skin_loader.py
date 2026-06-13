@@ -144,6 +144,8 @@ def _scan(directory: Path) -> list[Skin]:
         return []
     out: list[Skin] = []
     for toml_path in sorted(directory.glob("*/skin.toml")):
+        if toml_path.parent.name.startswith("_"):
+            continue   # reserved (e.g. _template) — never a selectable skin
         skin = parse_skin(toml_path.parent)
         if skin is not None:
             out.append(skin)

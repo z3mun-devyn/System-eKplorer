@@ -183,6 +183,38 @@ def test_resolve_fit_order_user_then_toml_then_cover():
     assert sb.resolve_fit(None, None) == "cover"             # off / none → cover
 
 
+def test_resolve_scrim_strength(qt_app):
+    """skin [background].scrim, clamped; bad/missing → 0.70; no bg → 0.0."""
+    def sk(bg):
+        return skin_loader.Skin(id="s", name="s", background=bg)
+    assert sb.resolve_scrim(sk({"image": "b.png", "scrim": 0.3})) == 0.3
+    assert sb.resolve_scrim(sk({"image": "b.png"})) == 0.70        # default
+    assert sb.resolve_scrim(sk({"image": "b.png", "scrim": "x"})) == 0.70
+    assert sb.resolve_scrim(sk({"image": "b.png", "scrim": 2.0})) == 0.70
+    assert sb.resolve_scrim(sk({"image": "b.png", "scrim": 0.0})) == 0.0   # valid
+    assert sb.resolve_scrim(skin_loader.Skin(id="n", name="n")) == 0.0     # no bg
+    assert sb.resolve_scrim(None) == 0.0
+
+
+def test_fileview_scrim_alpha_only_with_wallpaper(qt_app, clean_coordinator):
+    if qt_app is None:
+        pytest.skip("PyQt6 unavailable")
+    from views.file_view import FileView
+    skins = {s.id: s for s in skin_loader.discover_skins(user_dir="/nonexistent")}
+    fv = FileView()
+    fv.resize(900, 600)
+
+    fv.apply_skin_background(skins["clockwork"])          # bg → default 0.70 scrim
+    assert fv._tree._scrim_alpha == round(0.70 * 255)
+    assert fv._list._scrim_alpha == round(0.70 * 255)
+
+    fv.apply_skin_background(skins["high-contrast"])      # palette-only → no scrim
+    assert fv._tree._scrim_alpha == 0
+
+    fv.apply_skin_background(None)                         # off → no scrim
+    assert fv._tree._scrim_alpha == 0
+
+
 def test_scaling_value_parsed_and_defaulted(qt_app, clean_coordinator):
     if qt_app is None:
         pytest.skip("PyQt6 unavailable")

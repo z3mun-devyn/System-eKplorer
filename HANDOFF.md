@@ -5,6 +5,41 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 P5: Readability scrim + High Contrast skin + _template authoring folder.
+  LAST engine build — M11 is feature-complete (art pass, then tag, remain).
+  STATUS: tests green; NOT yet eyeballed on a real display.
+  WHY: P4 makes item viewports transparent so rows sit on the wallpaper — fine for
+  our dark skins, but stranger-authored bright/opaque art destroys text legibility.
+  SCRIM (views/file_view.py): a palette(Base)-coloured veil painted BETWEEN wallpaper
+  and rows. Z-order discovery — wallpaper paints in FileView.paintEvent (parent),
+  rows in the child view viewport (made transparent); so the scrim must paint in the
+  view's own paintEvent before items. New _ScrimTreeView/_ScrimListView subclass
+  QTreeView/QListView: their paintEvent fills the POPULATED-ROWS region
+  (0 → bottom of last visible row, via _visible_rows_bottom, clamped to viewport)
+  with QColor(Base, alpha=_scrim_alpha) then super() draws rows on top. Because text
+  is palette(Text) and the scrim is palette(Base) — always contrasting by palette
+  design — names stay legible on ANY wallpaper. Area BELOW the last row is left
+  transparent so art still shows in empty space. Strength: skin_background.resolve_scrim
+  — [background].scrim (0..1), clamped; missing/bad → 0.70 default; skins with NO
+  [background] → 0.0 (no scrim). FileView.apply_skin_background sets _tree/_list
+  _scrim_alpha = round(strength*255) only when a wallpaper is actually painted, else 0
+  (Off / palette-only / High Contrast → no scrim, no-op). resolve_scrim/_fit live in
+  skin_background (palette engine untouched).
+  HIGH CONTRAST skin (assets/skins/high-contrast/skin.toml): palette-only, no bg —
+  #000 surfaces, #fff text+mid, #ff0 selection. Rides the existing engine, appears in
+  the dropdown, gets no scrim.
+  _TEMPLATE (assets/skins/_template/skin.toml): heavily-commented authoring reference —
+  all 9 palette roles explained, [background] scaling/opacity/scrim documented,
+  [attribution] showing author/source/url/license/modified, commented-out [sounds],
+  and the critical warning that colors come from [palette] NOT the image (edit BOTH).
+  No bg.png shipped (comment tells authors to drop their own). LOADER: skin_loader._scan
+  now skips any folder whose name starts with "_" (the only loader change), so _template
+  never appears as selectable. +tests: resolve_scrim resolution (skin > 0.70 default,
+  clamp, no-bg→0); FileView scrim alpha gated on real wallpaper; "_"-folder excluded
+  from discovery; high-contrast parses+loads; bundled-bg test now excludes high-contrast.
+  Full suite 944 passing. Untouched: palette engine, sidebar, Configure dialog, terminal,
+  the six existing skins' palettes, loader parse logic beyond the "_" rule.
+
 - M11 feature — background fit mode exposed as a per-skin user control in Appearance.
   [background].scaling was engine-honored but author-only in TOML; now there's a
   "Background fit" QComboBox (Cover/Contain/Stretch) in the Appearance preview panel.

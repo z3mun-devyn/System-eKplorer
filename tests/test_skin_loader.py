@@ -146,13 +146,39 @@ def test_discover_real_bundled_set():
             "ignorance", "clockwork", "backyard"} <= ids
 
 
+def test_underscore_folders_excluded_from_discovery(tmp_path):
+    """Folders starting with '_' (e.g. _template) are never selectable skins."""
+    bundled = tmp_path / "bundled"
+    _write_skin(bundled / "real", '[meta]\nschema=1\nid="real"\nname="Real"\n')
+    _write_skin(bundled / "_template",
+                '[meta]\nschema=1\nid="my-skin"\nname="Template"\n')
+    ids = {s.id for s in skin_loader.discover_skins(bundled_dir=bundled,
+                                                    user_dir=tmp_path / "none")}
+    assert "real" in ids
+    assert "my-skin" not in ids       # _template skipped despite its meta.id
+
+
+def test_high_contrast_skin_loads():
+    skins = {s.id: s for s in skin_loader.discover_skins(user_dir="/nonexistent")}
+    assert "high-contrast" in skins
+    hc = skins["high-contrast"]
+    assert hc.palette is not None and len(hc.palette) == 9
+    assert hc.palette["highlight"] == "#ffff00"
+    assert hc.background is None       # no wallpaper → no scrim
+
+
+def test_template_not_in_real_discovery():
+    ids = {s.id for s in skin_loader.discover_skins(user_dir="/nonexistent")}
+    assert "my-skin" not in ids and "_template" not in ids and "template" not in ids
+
+
 def test_bundled_skins_have_background_and_attribution():
-    """P4: every bundled skin parses a [background] (cover/center/opacity) and an
-    [attribution] with author + source."""
-    skins = [s for s in skin_loader.discover_skins(user_dir="/nonexistent")
-             if s.id != "off"]
-    assert len(skins) == 6
-    for s in skins:
+    """P4: the six wallpaper skins parse a [background] (cover/center/opacity) and
+    an [attribution] with author + source. (High Contrast is palette-only — no bg.)"""
+    bg_skins = [s for s in skin_loader.discover_skins(user_dir="/nonexistent")
+                if s.id not in ("off", "high-contrast")]
+    assert len(bg_skins) == 6
+    for s in bg_skins:
         assert s.background is not None, s.id
         assert s.background.get("scaling") == "cover", s.id
         assert s.background.get("anchor") == "center", s.id

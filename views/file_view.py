@@ -579,6 +579,62 @@ class _FilePillDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+# ── Readability scrim (P5) ──────────────────────────────────────────────────────
+#
+# When a skin wallpaper is active the item viewports are transparent so rows sit
+# on the art. On bright/busy/opaque wallpapers that wrecks text legibility. These
+# view subclasses paint a palette(Base)-coloured scrim over the POPULATED-ROWS
+# region (top → bottom of the last visible row) before the rows draw. Because text
+# is palette(Text) and the scrim is palette(Base) — which always contrast by
+# palette design — file names stay legible on ANY wallpaper. The area BELOW the
+# last row is left untouched so the wallpaper still shows in empty space.
+
+def _visible_rows_bottom(view) -> int:
+    """Bottom (viewport coords) of the last row, clamped to the viewport; 0 = none."""
+    model = view.model()
+    if model is None:
+        return 0
+    root = view.rootIndex()
+    rows = model.rowCount(root)
+    if rows == 0:
+        return 0
+    last = model.index(rows - 1, 0, root)
+    if not last.isValid():
+        return 0
+    bottom = view.visualRect(last).bottom() + 1
+    return max(0, min(bottom, view.viewport().height()))
+
+
+def _paint_row_scrim(view) -> None:
+    alpha = getattr(view, "_scrim_alpha", 0)
+    if alpha <= 0:
+        return
+    bottom = _visible_rows_bottom(view)
+    if bottom <= 0:
+        return
+    color = QColor(view.palette().color(QPalette.ColorRole.Base))
+    color.setAlpha(alpha)
+    painter = QPainter(view.viewport())
+    painter.fillRect(QRect(0, 0, view.viewport().width(), bottom), color)
+    painter.end()
+
+
+class _ScrimTreeView(QTreeView):
+    _scrim_alpha = 0   # 0 = off; else 0..255 (skin scrim strength × 255)
+
+    def paintEvent(self, event) -> None:
+        _paint_row_scrim(self)      # wallpaper(parent) → SCRIM → rows(super)
+        super().paintEvent(event)
+
+
+class _ScrimListView(QListView):
+    _scrim_alpha = 0
+
+    def paintEvent(self, event) -> None:
+        _paint_row_scrim(self)
+        super().paintEvent(event)
+
+
 # ── FileView ──────────────────────────────────────────────────────────────────
 
 class FileView(QWidget):
@@ -633,7 +689,7 @@ class FileView(QWidget):
         self._view_stack = QStackedWidget()
 
         # ── Details view (QTreeView) ──────────────────────────────────────────
-        self._tree = QTreeView()
+        self._tree = _ScrimTreeView()
         self._tree.setModel(self._proxy)
         self._tree.setRootIsDecorated(False)
         self._tree.setAlternatingRowColors(False)
@@ -691,7 +747,7 @@ class FileView(QWidget):
             self._on_context_menu)
 
         # ── Icons view (QListView) ────────────────────────────────────────────
-        self._list = QListView()
+        self._list = _ScrimListView()
         self._list.setModel(self._proxy)
         self._list.setViewMode(QListView.ViewMode.IconMode)
         self._list.setIconSize(QSize(48, 48))
@@ -725,6 +781,7 @@ class FileView(QWidget):
         self._bg_path: Path | None = None
         self._bg_opacity = 1.0
         self._bg_scaling = "cover"                # cover | contain | stretch
+        self._bg_scrim = 0.70                     # readability scrim strength 0..1
         self._bg_source: QPixmap | None = None   # mid-res, decoded once, in memory
         self._bg_cache: QPixmap | None = None     # fitted to current viewport
         self._bg_resize_timer = QTimer(self)
@@ -763,10 +820,17 @@ class FileView(QWidget):
         self._bg_path = path
         self._bg_opacity = max(0.0, min(1.0, opacity))
         self._bg_scaling = skin_background.resolve_fit(skin, fit_override)
+        self._bg_scrim = skin_background.resolve_scrim(skin)
         self._bg_source = self._load_bg_source(path)   # decode ONCE, keep in memory
         if path is not None and self._bg_source is None:
             self._bg_path = None                        # decode failed → palette only
         self._set_views_transparent(self._bg_path is not None)
+        # Scrim only when a wallpaper is actually painted (off / palette-only → none).
+        alpha = round(self._bg_scrim * 255) if self._bg_path is not None else 0
+        self._tree._scrim_alpha = alpha
+        self._list._scrim_alpha = alpha
+        self._tree.viewport().update()
+        self._list.viewport().update()
         self._rebuild_bg_cache()
         self.update()
 

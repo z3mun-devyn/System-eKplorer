@@ -51,3 +51,22 @@ def resolve_fit(skin, user_override=None) -> str:
     if isinstance(toml_value, str) and toml_value.lower() in VALID_FITS:
         return toml_value.lower()
     return "cover"
+
+
+DEFAULT_SCRIM = 0.70
+
+
+def resolve_scrim(skin) -> float:
+    """Readability-scrim strength (0..1) for a skin's wallpaper.
+
+    Skins without a [background] get 0.0 (no scrim — nothing to protect text from).
+    Otherwise [background].scrim, clamped to 0..1; missing/bad value → 0.70 default.
+    """
+    background = getattr(skin, "background", None) if skin is not None else None
+    if not isinstance(background, dict):
+        return 0.0
+    try:
+        value = float(background.get("scrim", DEFAULT_SCRIM))
+    except (TypeError, ValueError):
+        return DEFAULT_SCRIM
+    return value if 0.0 <= value <= 1.0 else DEFAULT_SCRIM
