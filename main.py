@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import skin_background
 import skin_loader
 import skin_manager
 import strings
@@ -326,14 +327,21 @@ def _autoload_active_skin(app, settings: SettingsRepository | None = None) -> No
     """
     settings = settings or SettingsRepository()
     active = settings.get("appearance.active_skin")
+    skins = skin_loader.discover_skins()
     role_map = skin_loader.resolve_role_map(
         active,
-        skin_loader.discover_skins(),
+        skins,
         override_lookup=lambda role: settings.get(
             f"appearance.override.{active}.{role}"),
     )
     if role_map is not None:
         skin_manager.apply_skin(app, role_map)
+
+    # FM-viewport background: the active skin (None for off/unset/missing id).
+    skin = None
+    if active and active != "off":
+        skin = next((s for s in skins if s.id == active), None)
+    skin_background.set_active(skin)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

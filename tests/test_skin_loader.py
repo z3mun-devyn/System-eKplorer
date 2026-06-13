@@ -146,6 +146,23 @@ def test_discover_real_bundled_set():
             "ignorance", "clockwork", "backyard"} <= ids
 
 
+def test_bundled_skins_have_background_and_attribution():
+    """P4: every bundled skin parses a [background] (cover/center/opacity) and an
+    [attribution] with author + source."""
+    skins = [s for s in skin_loader.discover_skins(user_dir="/nonexistent")
+             if s.id != "off"]
+    assert len(skins) == 6
+    for s in skins:
+        assert s.background is not None, s.id
+        assert s.background.get("scaling") == "cover", s.id
+        assert s.background.get("anchor") == "center", s.id
+        assert "opacity" in s.background, s.id
+        assert s.background.get("image") == "bg.png", s.id
+        assert s.attribution, s.id
+        assert s.attribution[0].get("author"), s.id
+        assert s.attribution[0].get("source"), s.id
+
+
 # ── resolve_role_map ────────────────────────────────────────────────────────────
 
 @pytest.fixture

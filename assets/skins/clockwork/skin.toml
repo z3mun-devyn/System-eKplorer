@@ -20,8 +20,10 @@ highlighted_text = "#1a1408"
 
 [background]
 image = "bg.png"
-mode = "cover"
+scaling = "cover"
+anchor = "center"
+opacity = 1.0
 
 [[attribution]]
-text = "Photograph by the original photographer."
-note = "used with permission — placeholder credit, confirm before release"
+author = "Mental Picture Studio"
+source = "Photo · treatment by Devyn Genjima"

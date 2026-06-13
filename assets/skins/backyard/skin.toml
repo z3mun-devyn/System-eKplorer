@@ -20,8 +20,10 @@ highlighted_text = "#0a140a"
 
 [background]
 image = "bg.png"
-mode = "cover"
+scaling = "cover"
+anchor = "center"
+opacity = 1.0
 
 [[attribution]]
-text = "\"Swiss Backyard\" photograph by the original photographer."
-note = "used with permission — placeholder credit, confirm before release"
+author = "Mental Picture Studio"
+source = "Photo · treatment by Devyn Genjima"

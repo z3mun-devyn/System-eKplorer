@@ -20,8 +20,10 @@ highlighted_text = "#ffffff"
 
 [background]
 image = "bg.png"
-mode = "cover"
+scaling = "cover"
+anchor = "center"
+opacity = 1.0
 
 [[attribution]]
-text = "Stylized regional motif — NOT the official Hong Kong emblem."
-note = "placeholder credit — confirm before release"
+author = "Devyn Genjima"
+source = "Original work"

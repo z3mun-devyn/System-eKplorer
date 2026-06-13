@@ -18,11 +18,12 @@ dark = "#141414"
 highlight = "#5a7fb5"
 highlighted_text = "#ffffff"
 
-# Parsed but NOT painted this pass (P4 owns background rendering).
 [background]
 image = "bg.png"
-mode = "cover"
+scaling = "cover"
+anchor = "center"
+opacity = 1.0
 
 [[attribution]]
-text = "Original eKplorer artwork."
-note = "in-house"
+author = "Devyn Genjima"
+source = "folder base: iconpacks.net"

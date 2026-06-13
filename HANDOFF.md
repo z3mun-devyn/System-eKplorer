@@ -5,6 +5,81 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 P4 fix 2 — resize stretched the wallpaper (crunch) + honor per-skin fit mode.
+  ROOT CAUSE: the resize path blitted the cached pixmap stretched to the new
+  viewport (drawPixmap(rect,…)) → non-aspect distortion; [background].scaling was
+  ignored. FIX (views/file_view.py only): honor scaling ∈ {cover|contain|stretch}
+  (unknown/missing → cover), parsed in apply_skin_background into self._bg_scaling.
+  New static _fit(src, mode, w, h, transform): cover = KeepAspectRatioByExpanding +
+  center-crop → exact w×h; contain = KeepAspectRatio → ≤ w×h (letterboxed); stretch =
+  IgnoreAspectRatio → exact w×h (the ONLY distorting mode). _rebuild_bg_cache takes a
+  transform arg: resizeEvent now recomputes the SAME fit mode live with
+  FastTransformation (cover re-crops/zooms instead of stretching — cheap, from the
+  1920 mid-res), and the 120ms debounce redoes it with SmoothTransformation for crisp.
+  paintEvent no longer stretches: it fills the rect with palette Base (contain
+  letterbox / backdrop, never black) then draws the fitted cache centered (cover/
+  stretch fill, contain centered). Never applies a non-aspect transform unless
+  mode=="stretch". +2 tests (fit math: cover/stretch exact viewport, contain aspect-
+  preserving fit incl. height-bound case; scaling parsed + defaulted to cover). Full
+  suite 936 passing. Untouched: palette engine, loader, attribution, sidebar. All six
+  bundled skins ship scaling="cover". Eyeball pending.
+
+- M11 P4 fix — wallpaper rescale lagged during window drag-resize. ROOT CAUSE: the
+  post-resize rebuild re-decoded bg.png FROM DISK and Lanczos-scaled the 2560 source
+  every settle, and paintEvent blitted the old-size cache at (0,0) (gaps on grow).
+  FIX (views/file_view.py only): (1) decode bg.png ONCE on skin-activate into an
+  in-memory mid-res intermediate (_bg_source, longest edge ≤1920) — rescales come
+  from that, never disk/full-res; (2) _rebuild_bg_cache cover-crops 1920→viewport
+  (cheap), called once on resize-end (debounce tightened 150→120ms); (3) mid-drag,
+  paintEvent fast-blits the existing cache stretched to fill (drawPixmap(rect,…),
+  slightly soft) and swaps to the crisp Lanczos cache when the resize settles —
+  detected by comparing cache size to widget size, no flag. +2 tests (mid-res
+  intermediate ≤1920; resize rebuild rescales from memory, asserts QPixmap NOT
+  re-instantiated = no disk decode, crisp at new size). Full suite 934 passing.
+  Untouched: palette engine, skin loader, attribution. Eyeball pending.
+
+- M11 P4: Background loader (FM content viewport only) + attribution finalized.
+  Last engine build — M11 is feature-complete pending the art/color pass + tag.
+  STATUS: tests green; NOT yet eyeballed on a real display.
+  WHERE THE WALLPAPER PAINTS: behind the FILE MANAGER content view (FileView) ONLY.
+  NOT the tree sidebar (NavigationSidebar — stays flat AlternateBase, untouched),
+  NOT the Configure dialog, NOT the terminal (fixed theme).
+  Mechanism (views/file_view.py): FileView is a QWidget(VBox→QStackedWidget→QTreeView
+  + QListView) whose item-view viewports paint palette Base opaquely. On bg activate
+  we (a) set the tree/list backgrounds transparent (stylesheet + viewport
+  autoFillBackground False) so rows/icons composite over the image, and (b) paint a
+  cover-cropped QPixmap in FileView.paintEvent. apply_skin_background(skin) loads
+  bg.png, cover-scales (KeepAspectRatioByExpanding + center crop) to the CURRENT
+  size, caches only that viewport-sized pixmap and DROPS the full-res surface;
+  opacity comes from the TOML. resizeEvent debounces 150ms then re-scales FROM
+  SOURCE (reloads bg.png — we don't keep full-res in memory). "off"/None clears the
+  cache and restores opaque views (pixel-identical to pre-P4). Missing/unreadable
+  bg.png → no background, palette kept, logged, no crash.
+  COORDINATOR (skin_background.py, new): decouples drivers from views. FileViews
+  register() themselves (and immediately get the current active background);
+  set_active(skin|None) pushes to all live painters (weakrefs, dead ones pruned).
+  Drivers: main._autoload_active_skin resolves the active Skin and calls
+  skin_background.set_active (None for off/unset/missing) right after the palette
+  autoload — works even though it runs before MainWindow exists (FileView picks it
+  up on register). configure_dialog._apply_skin_preview drives it live alongside the
+  palette preview, so selecting a skin swaps the wallpaper live and Cancel reverts it.
+  skin.toml: all six [background] migrated mode→ scaling="cover"/anchor="center"/
+  opacity=1.0 (all center by design, incl. TWMAF cut-off intentional). [attribution]
+  set to final author/source: twmaf1/twmaf2 = Devyn Genjima / "Original work";
+  ek-imp = Devyn Genjima / "folder base: iconpacks.net"; ignorance = Devyn Genjima /
+  "Generated with Venice.AI"; clockwork/backyard = Mental Picture Studio / "Photo ·
+  treatment by Devyn Genjima". (skin_loader stores these as-is; no loader change.)
+  ATTRIBUTION RENDER: Appearance page (configure_dialog) now shows the active skin's
+  credit as "<author> — <source>" (was text/note in P3; legacy text fallback kept).
+  bg.png dims: five are 2560x1600, twmaf2 2560x1660 — cover-crop is dimension-agnostic.
+  +7 tests (test_skin_background.py: coordinator register/set_active/off-invalidate/
+  dead-prune; FileView apply+clear cache & transparency, missing-bg fallback) and a
+  bundled-blocks parse test in test_skin_loader.py. Full suite 932 passing. GUI paint
+  itself isn't unit-tested (eyeball). DID NOT TOUCH: tree sidebar bg, Configure dialog
+  bg, terminal_view, skin_manager palette internals, the [palette] values (art/color
+  pass is next). Note: scripts/bg_preview.py (throwaway crop previewer) and the edited
+  bg.png/icon remain uncommitted working-tree items.
+
 - M11 fix — skin colours reverted on focus loss / disabled widgets. ROOT CAUSE:
   skin_manager.build_palette wrote only the Active (Normal) colour group, so Qt
   painted unfocused windows from the Inactive group and disabled widgets from the

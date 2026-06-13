@@ -17,12 +17,16 @@ Threading discipline:
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import skin_background
 import strings
+
+logger = logging.getLogger(__name__)
 from backends.directory_backend import DirectoryLoader
 from models.file_entry import FileEntry, fmt_size, mime_label
 from models.tag import Tag
@@ -39,11 +43,12 @@ from PyQt6.QtCore import (
     QSortFilterProxyModel,
     Qt,
     QThread,
+    QTimer,
     QUrl,
     pyqtSignal,
 )
 from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPalette
+from PyQt6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -714,10 +719,156 @@ class FileView(QWidget):
         self._view_stack.addWidget(self._list)   # index 1 — icons
         layout.addWidget(self._view_stack)
 
+        # ── Skin background (P4) ──────────────────────────────────────────────
+        # Wallpaper painted BEHIND the content view only (not the tree sidebar,
+        # which is a separate widget). Cache holds only a viewport-sized pixmap.
+        self._bg_path: Path | None = None
+        self._bg_opacity = 1.0
+        self._bg_scaling = "cover"                # cover | contain | stretch
+        self._bg_source: QPixmap | None = None   # mid-res, decoded once, in memory
+        self._bg_cache: QPixmap | None = None     # fitted to current viewport
+        self._bg_resize_timer = QTimer(self)
+        self._bg_resize_timer.setSingleShot(True)
+        self._bg_resize_timer.setInterval(120)
+        self._bg_resize_timer.timeout.connect(self._rebuild_bg_cache_and_repaint)
+        skin_background.register(self)   # applies the current active background
+
+    # ── Skin background painter ────────────────────────────────────────────────
+
+    def apply_skin_background(self, skin) -> None:
+        """Activate/clear the wallpaper for this view (called via skin_background).
+
+        ``skin=None`` (or "off") clears it: views go opaque again, no painting.
+        Missing/unreadable bg.png falls back to no background (palette only).
+        """
+        path: Path | None = None
+        opacity = 1.0
+        scaling = "cover"
+        background = getattr(skin, "background", None) if skin is not None else None
+        if background:
+            image = background.get("image")
+            if image and getattr(skin, "path", None) is not None:
+                candidate = Path(skin.path) / image
+                if candidate.is_file():
+                    path = candidate
+                else:
+                    logger.warning("skin %r: background image missing: %s",
+                                   getattr(skin, "id", "?"), candidate)
+            try:
+                opacity = float(background.get("opacity", 1.0))
+            except (TypeError, ValueError):
+                opacity = 1.0
+            scaling = str(background.get("scaling", "cover")).lower()
+            if scaling not in ("cover", "contain", "stretch"):
+                scaling = "cover"
+
+        self._bg_path = path
+        self._bg_opacity = max(0.0, min(1.0, opacity))
+        self._bg_scaling = scaling
+        self._bg_source = self._load_bg_source(path)   # decode ONCE, keep in memory
+        if path is not None and self._bg_source is None:
+            self._bg_path = None                        # decode failed → palette only
+        self._set_views_transparent(self._bg_path is not None)
+        self._rebuild_bg_cache()
+        self.update()
+
+    @staticmethod
+    def _load_bg_source(path: Path | None) -> QPixmap | None:
+        """Decode bg.png ONCE into a mid-res intermediate (longest edge 1920) kept
+        in memory. Live viewport rescales come from this — never the disk or the
+        full 2560 surface — so resize re-scales are cheap."""
+        if not path:
+            return None
+        img = QPixmap(str(path))
+        if img.isNull():
+            logger.warning("skin background unreadable: %s", path)
+            return None
+        max_edge = 1920
+        if img.width() >= img.height():
+            if img.width() > max_edge:
+                img = img.scaledToWidth(
+                    max_edge, Qt.TransformationMode.SmoothTransformation)
+        elif img.height() > max_edge:
+            img = img.scaledToHeight(
+                max_edge, Qt.TransformationMode.SmoothTransformation)
+        return img
+
+    def _set_views_transparent(self, on: bool) -> None:
+        """Let the wallpaper show through the item views (only while bg active)."""
+        self._tree.setStyleSheet(
+            "QTreeView { background: transparent; }" if on else "")
+        self._list.setStyleSheet(
+            "QListView { background: transparent; }" if on else "")
+        self._tree.viewport().setAutoFillBackground(not on)
+        self._list.viewport().setAutoFillBackground(not on)
+
+    @staticmethod
+    def _fit(src: QPixmap, mode: str, w: int, h: int, transform) -> QPixmap:
+        """Fit ``src`` to ``w``x``h`` per ``mode`` (aspect-preserving unless stretch).
+
+        cover   → fill + center-crop, returns exactly w×h.
+        contain → fit inside, returns ≤ w×h (caller letterboxes the gaps).
+        stretch → exact w×h, aspect IGNORED (the only distorting mode).
+        """
+        if mode == "stretch":
+            return src.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, transform)
+        if mode == "contain":
+            return src.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, transform)
+        # cover (default)
+        scaled = src.scaled(
+            w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, transform)
+        x = (scaled.width() - w) // 2
+        y = (scaled.height() - h) // 2
+        return scaled.copy(x, y, w, h)
+
+    def _rebuild_bg_cache(self, transform=Qt.TransformationMode.SmoothTransformation) -> None:
+        """Recompute the fitted cache from the in-memory mid-res source.
+
+        Always uses the skin's fit mode (never a non-aspect transform unless the
+        mode is "stretch"). FastTransformation is used live during a resize drag;
+        SmoothTransformation (default) on resize-end for the crisp result."""
+        if self._bg_source is None:
+            self._bg_cache = None
+            return
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            self._bg_cache = None
+            return
+        self._bg_cache = self._fit(self._bg_source, self._bg_scaling, w, h, transform)
+
+    def _rebuild_bg_cache_and_repaint(self) -> None:
+        self._rebuild_bg_cache()   # smooth (default)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._bg_cache is None:
+            return
+        painter = QPainter(self)
+        # Backdrop / contain letterbox: palette Base (full opacity), never black.
+        painter.fillRect(self.rect(), self.palette().color(QPalette.ColorRole.Base))
+        painter.setOpacity(self._bg_opacity)
+        # cover/stretch fill the rect (drawn at origin); contain is centered.
+        x = (self.width() - self._bg_cache.width()) // 2
+        y = (self.height() - self._bg_cache.height()) // 2
+        painter.drawPixmap(x, y, self._bg_cache)
+        painter.end()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._bg_source is not None:
+            # Live: recompute the SAME fit mode at the new size with a fast filter
+            # (cheap, from mid-res) so cover re-crops instead of stretching.
+            self._rebuild_bg_cache(Qt.TransformationMode.FastTransformation)
+            self.update()
+            self._bg_resize_timer.start()   # crisp Smooth pass once the drag settles
+
     # ── Qt lifecycle ──────────────────────────────────────────────────────────
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if self._bg_path and self._bg_cache is None:
+            self._rebuild_bg_cache_and_repaint()   # build promptly on first show
         if not self._shown:
             self._shown = True
             self._load()

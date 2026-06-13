@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import skin_background
 import skin_loader
 import skin_manager
 import strings
@@ -372,6 +373,10 @@ class ConfigureDialog(QDialog):
         else:
             skin_manager.apply_skin(app, role_map)
 
+        # Drive the FM-viewport wallpaper live alongside the palette preview.
+        skin = next((s for s in self._skins if s.id == skin_id), None)
+        skin_background.set_active(None if skin_id == "off" else skin)
+
     def _update_skin_preview_panel(self, skin) -> None:
         self._skin_name.setText(skin.name)
         self._skin_desc.setText(skin.description)
@@ -379,12 +384,15 @@ class ConfigureDialog(QDialog):
         if skin.attribution:
             parts = []
             for entry in skin.attribution:
-                text = entry.get("text", "")
-                note = entry.get("note", "")
-                parts.append(f"{text} ({note})" if note else text)
-            self._skin_attrib.setText(
-                f"{strings.CONFIGURE_APPEARANCE_ATTRIBUTION} " + " · ".join(parts)
-            )
+                author = entry.get("author", "")
+                source = entry.get("source", "")
+                if author and source:
+                    parts.append(f"{author} — {source}")
+                elif author or source:
+                    parts.append(author or source)
+                elif entry.get("text"):          # legacy P2 fallback
+                    parts.append(entry["text"])
+            self._skin_attrib.setText(" · ".join(p for p in parts if p))
         else:
             self._skin_attrib.clear()
 
