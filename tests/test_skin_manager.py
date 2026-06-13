@@ -39,10 +39,38 @@ _READ_EXPECTATIONS = [
 ]
 
 
+_ACTIVE = QPalette.ColorGroup.Active
+_INACTIVE = QPalette.ColorGroup.Inactive
+_DISABLED = QPalette.ColorGroup.Disabled
+
+
 @pytest.mark.parametrize("role,hex_", _READ_EXPECTATIONS)
 def test_build_palette_sets_nine_read_roles(role, hex_):
     pal = skin_manager.build_palette(SKIN, QPalette())
     assert pal.color(_NORMAL, role).name() == hex_
+
+
+@pytest.mark.parametrize("role,hex_", _READ_EXPECTATIONS)
+def test_build_palette_populates_all_three_groups(role, hex_):
+    """Active + Inactive get the full skin colour (so the skin persists on focus
+    loss); Disabled is populated too (so it can't fall back to the theme default)."""
+    pal = skin_manager.build_palette(SKIN, QPalette())
+    assert pal.color(_ACTIVE, role).name() == hex_
+    assert pal.color(_INACTIVE, role).name() == hex_
+    # Disabled is set (dimmed) — not left at the base/default.
+    assert pal.color(_DISABLED, role).name() == _dim_hex(role, hex_)
+
+
+@pytest.mark.parametrize("role,hex_", _READ_EXPECTATIONS)
+def test_build_palette_disabled_differs_from_active(role, hex_):
+    pal = skin_manager.build_palette(SKIN, QPalette())
+    assert pal.color(_DISABLED, role) != pal.color(_ACTIVE, role)
+
+
+def _dim_hex(role, hex_):
+    """Expected Disabled colour: the module's own dimming of the skin colour."""
+    from PyQt6.QtGui import QColor
+    return skin_manager._dim(QColor(hex_), QColor(SKIN["mid"])).name()
 
 
 def test_build_palette_derives_non_read_roles_when_absent():

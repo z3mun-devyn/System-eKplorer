@@ -5,6 +5,21 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 fix — skin colours reverted on focus loss / disabled widgets. ROOT CAUSE:
+  skin_manager.build_palette wrote only the Active (Normal) colour group, so Qt
+  painted unfocused windows from the Inactive group and disabled widgets from the
+  Disabled group — both still holding the theme-native baseline, so the skin
+  partially vanished when eKplorer lost focus. FIX (build_palette only; skin_loader/
+  configure_dialog/terminal untouched): resolve each role's colour once, then write
+  it to BOTH Active and Inactive at full strength (skin persists on focus loss) and
+  to Disabled in a dimmed form. New _dim(color, mid) blends ~40% toward the skin's
+  own Mid then scales HSV value to 0.85 — derived from the skin (no hardcoded grey),
+  and the value-scale guarantees the dimmed colour differs even for the Mid role
+  itself. restore_baseline/"Off" still returns to the launch palette cleanly.
+  +18 tests (test_skin_manager.py): all 9 read roles populated on Active+Inactive+
+  Disabled, and Disabled != Active for every role. Full suite 925 passing.
+  NOTE: not yet eyeballed on a real display (focus-loss persistence + disabled look).
+
 - M11 P3: Appearance page in the Configure dialog (the skin picker UI + save).
   STATUS: DONE, tests green; not yet eyeballed on a real display. Continues on
   branch m11-p1-palette-engine (still NOT merged to main).

@@ -58,26 +58,59 @@ def capture_baseline(app) -> None:
     _baseline_palette = QPalette(app.palette())  # detached copy
 
 
+def _dim(color: QColor, toward: QColor,
+         blend: float = 0.4, value_scale: float = 0.85) -> QColor:
+    """Mute ``color`` for the Disabled group: blend toward Mid, then darken.
+
+    Derived entirely from the skin's own colours (no hardcoded grey). The
+    value-scale guarantees the dimmed result differs from the source even for
+    the Mid role itself (which blends toward itself)."""
+    out = QColor(
+        round(color.red()   * (1 - blend) + toward.red()   * blend),
+        round(color.green() * (1 - blend) + toward.green() * blend),
+        round(color.blue()  * (1 - blend) + toward.blue()  * blend),
+        color.alpha(),
+    )
+    h, s, v, a = out.getHsv()
+    out.setHsv(h, s, round(v * value_scale), a)
+    return out
+
+
 def build_palette(role_map: dict[str, str], base: QPalette) -> QPalette:
-    """Return a copy of ``base`` with the skin's colors applied (Normal group).
+    """Return a copy of ``base`` with the skin's colors applied to ALL groups.
 
     Sets any of the 9 read roles present in ``role_map``, then derives the
     non-read roles (Button/ButtonText/ToolTip*/PlaceholderText/Link/BrightText)
     from their source role so native widgets stay coherent — unless the caller
-    supplied the derived role explicitly. The Disabled group is left to
-    Fusion's automatic dimming for v1.
+    supplied the derived role explicitly. Every role is written to Active AND
+    Inactive (so the skin persists when the window loses focus) and to Disabled
+    in a dimmed form (so disabled widgets still read as disabled).
     """
     pal = QPalette(base)
 
+    # Resolve the final Active colour for each role we will set.
+    resolved: dict[QPalette.ColorRole, QColor] = {}
     for key, role in _READ_ROLES.items():
         if key in role_map:
-            pal.setColor(_NORMAL, role, QColor(role_map[key]))
+            resolved[role] = QColor(role_map[key])
 
     for key, (target, source) in _DERIVED_ROLES.items():
         if key in role_map:
-            pal.setColor(_NORMAL, target, QColor(role_map[key]))
+            resolved[target] = QColor(role_map[key])
+        elif source in resolved:
+            resolved[target] = QColor(resolved[source])
         else:
-            pal.setColor(_NORMAL, target, pal.color(_NORMAL, source))
+            resolved[target] = QColor(base.color(_NORMAL, source))
+
+    # Mid reference for dimming the Disabled group — skin's Mid if set, else base.
+    mid_ref = resolved.get(QPalette.ColorRole.Mid)
+    if mid_ref is None:
+        mid_ref = QColor(base.color(_NORMAL, QPalette.ColorRole.Mid))
+
+    for role, color in resolved.items():
+        pal.setColor(QPalette.ColorGroup.Active, role, color)
+        pal.setColor(QPalette.ColorGroup.Inactive, role, color)
+        pal.setColor(QPalette.ColorGroup.Disabled, role, _dim(color, mid_ref))
 
     return pal
 
