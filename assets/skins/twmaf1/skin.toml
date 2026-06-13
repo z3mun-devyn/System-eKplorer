@@ -3,26 +3,26 @@
 schema = 1
 id = "twmaf1"
 name = "TWMAF 1"
-description = "Cool slate-blue skin with a warm red accent."
+description = "Stark blacks and reds, in promotion of SECURITY ISSUE: Two Wars Middle A Fence, the transgressive crime novel."
 version = "0.1.0"
 author = "eKplorer"
 
 [palette]
-window = "#1a2230"
-window_text = "#d7e0ea"
-base = "#121823"
-text = "#d7e0ea"
-alternate_base = "#232f42"
-mid = "#46566e"
-dark = "#0b0f16"
-highlight = "#c0392b"
-highlighted_text = "#ffffff"
+window           = "#1c0000"
+window_text      = "#e8e0e0"
+base             = "#100a0b"
+text             = "#fc0000"
+alternate_base   = "#180e0f"   # sidebar / breadcrumb / modal bars
+mid              = "#b81d1d"   # borders + muted text, red-grey
+dark             = "#b81d1d"
+highlight        = "#b81d1d"   # selection — vivid red (art reds were too dark to use raw)
+highlighted_text = "#350101"
 
 [background]
 image = "bg.png"
 scaling = "cover"
 anchor = "center"
-opacity = 1.0
+opacity = 0.5
 
 [[attribution]]
 author = "Devyn Genjima"

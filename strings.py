@@ -669,6 +669,10 @@ CONFIGURE_APPEARANCE_HINT = (
 )
 CONFIGURE_APPEARANCE_NO_PREVIEW = "(no preview)"
 CONFIGURE_APPEARANCE_ATTRIBUTION = "Attribution:"
+CONFIGURE_APPEARANCE_FIT_LABEL = "Background fit:"
+CONFIGURE_APPEARANCE_FIT_COVER = "Cover"
+CONFIGURE_APPEARANCE_FIT_CONTAIN = "Contain"
+CONFIGURE_APPEARANCE_FIT_STRETCH = "Stretch"
 
 # ── Drive tile rename ─────────────────────────────────────────────────────────
 ACTION_RENAME_DRIVE = "✎"

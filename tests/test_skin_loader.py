@@ -216,10 +216,16 @@ def test_autoload_applies_stored_skin_and_falls_back(qt_app, tmp_path):
     skin_manager.capture_baseline(qt_app)
     baseline = win()
     repo = SettingsRepository(tmp_path / "settings.db")
+    # Expected window colour derived from the skin (not hardcoded) so palette
+    # tuning in twmaf1/skin.toml doesn't break this test.
+    from PyQt6.QtGui import QColor
+    twmaf1 = next(s for s in skin_loader.discover_skins(user_dir="/nonexistent")
+                  if s.id == "twmaf1")
+    expected = QColor(twmaf1.palette["window"]).name()
     try:
         repo.set("appearance.active_skin", "twmaf1")
         main._autoload_active_skin(qt_app, settings=repo)
-        assert win() == "#1a2230"               # autoloaded, no keypress
+        assert win() == expected                # autoloaded, no keypress
 
         skin_manager.restore_baseline(qt_app)
         repo.set("appearance.active_skin", "does-not-exist")

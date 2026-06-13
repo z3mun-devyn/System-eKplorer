@@ -5,6 +5,25 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- M11 feature — background fit mode exposed as a per-skin user control in Appearance.
+  [background].scaling was engine-honored but author-only in TOML; now there's a
+  "Background fit" QComboBox (Cover/Contain/Stretch) in the Appearance preview panel.
+  RESOLUTION ORDER (single source of truth, skin_background.resolve_fit): user
+  override appearance.fit.<id> → skin.toml [background].scaling → "cover". So the TOML
+  value is the DEFAULT; the picker overrides per skin. The fit flows through
+  set_active(skin, fit) → FileView.apply_skin_background(skin, fit_override) →
+  resolve_fit. Combo is disabled for "off" and palette-only skins (no bg image). On
+  change: writes appearance.fit.<active_id> IMMEDIATELY (crash-safe, not lazy) and
+  re-renders the viewport live (same fast→crisp path). On skin-switch / restart the
+  combo reflects the resolved value for that skin (each skin independent). Drivers:
+  configure_dialog (_on_skin_row_changed→_update_fit_combo, _apply_skin_preview passes
+  the override, _on_fit_changed persists+set_active) and main autoload (reads
+  appearance.fit.<active> and passes to set_active). Programmatic combo updates
+  blockSignals to avoid write-back loops. +5 tests (resolve_fit order incl. bad/case
+  user values; combo enable/reflect/persist/per-skin-independence; persistence across
+  dialog reopen = restart). Full suite 939 passing. Untouched: palette engine, loader
+  internals, sidebar. Strings: CONFIGURE_APPEARANCE_FIT_*.
+
 - M11 P4 fix 2 — resize stretched the wallpaper (crunch) + honor per-skin fit mode.
   ROOT CAUSE: the resize path blitted the cached pixmap stretched to the new
   viewport (drawPixmap(rect,…)) → non-aspect distortion; [background].scaling was

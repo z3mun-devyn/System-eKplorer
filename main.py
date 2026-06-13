@@ -337,11 +337,14 @@ def _autoload_active_skin(app, settings: SettingsRepository | None = None) -> No
     if role_map is not None:
         skin_manager.apply_skin(app, role_map)
 
-    # FM-viewport background: the active skin (None for off/unset/missing id).
+    # FM-viewport background: the active skin (None for off/unset/missing id),
+    # plus the user's per-skin fit override (appearance.fit.<id>) if set.
     skin = None
+    fit = None
     if active and active != "off":
         skin = next((s for s in skins if s.id == active), None)
-    skin_background.set_active(skin)
+        fit = settings.get(f"appearance.fit.{active}")
+    skin_background.set_active(skin, fit)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

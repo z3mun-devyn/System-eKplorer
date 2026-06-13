@@ -26,7 +26,7 @@ class _FakePainter:
     def __init__(self):
         self.received = []
 
-    def apply_skin_background(self, skin):
+    def apply_skin_background(self, skin, fit=None):
         self.received.append(skin)
 
 
@@ -168,6 +168,19 @@ def test_fit_modes_math(qt_app):
     # contain when height is the binding dimension
     contain_tall = FileView._fit(src, "contain", 50, 100, fast)
     assert (contain_tall.width(), contain_tall.height()) == (50, 25)
+
+
+def test_resolve_fit_order_user_then_toml_then_cover():
+    """Resolution: user override > skin.toml scaling > 'cover'."""
+    contain = skin_loader.Skin(id="c", name="c",
+                               background={"image": "bg.png", "scaling": "contain"})
+    nobg = skin_loader.Skin(id="n", name="n")
+    assert sb.resolve_fit(contain, "stretch") == "stretch"   # user wins
+    assert sb.resolve_fit(contain, None) == "contain"        # toml default
+    assert sb.resolve_fit(contain, "bogus") == "contain"     # bad user → toml
+    assert sb.resolve_fit(contain, "STRETCH") == "stretch"   # case-insensitive
+    assert sb.resolve_fit(nobg, None) == "cover"             # no toml → cover
+    assert sb.resolve_fit(None, None) == "cover"             # off / none → cover
 
 
 def test_scaling_value_parsed_and_defaulted(qt_app, clean_coordinator):

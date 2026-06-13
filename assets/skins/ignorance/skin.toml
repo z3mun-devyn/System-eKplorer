@@ -3,26 +3,26 @@
 schema = 1
 id = "ignorance"
 name = "Ignorance"
-description = "Near-black skin with a purple accent."
+description = "Heavily inspired by the Bliss Windows XP background; warm sunset."
 version = "0.1.0"
 author = "eKplorer"
 
 [palette]
-window = "#101012"
-window_text = "#c8c8cc"
-base = "#0a0a0c"
-text = "#c8c8cc"
-alternate_base = "#18181c"
-mid = "#3a3a40"
-dark = "#050506"
-highlight = "#8e44ad"
-highlighted_text = "#ffffff"
+window           = "#1c241c"
+window_text      = "#e8efe6"
+base             = "#232c22"
+text             = "#eef3ec"
+alternate_base   = "#2a352b"
+mid              = "#5d7050"   # mossy border
+dark             = "#131913"
+highlight        = "#6f9fb8"   # lighter blue (sky tone), your "lighter blue"
+highlighted_text = "#0e1a20"   # dark text — blue's too light for white
 
 [background]
 image = "bg.png"
 scaling = "cover"
 anchor = "center"
-opacity = 1.0
+opacity = 0.6
 
 [[attribution]]
 author = "Devyn Genjima"

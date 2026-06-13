@@ -735,15 +735,16 @@ class FileView(QWidget):
 
     # ── Skin background painter ────────────────────────────────────────────────
 
-    def apply_skin_background(self, skin) -> None:
+    def apply_skin_background(self, skin, fit_override=None) -> None:
         """Activate/clear the wallpaper for this view (called via skin_background).
 
         ``skin=None`` (or "off") clears it: views go opaque again, no painting.
-        Missing/unreadable bg.png falls back to no background (palette only).
+        ``fit_override`` (user pick) wins over the skin's TOML scaling; resolution
+        lives in skin_background.resolve_fit. Missing/unreadable bg.png falls back
+        to no background (palette only).
         """
         path: Path | None = None
         opacity = 1.0
-        scaling = "cover"
         background = getattr(skin, "background", None) if skin is not None else None
         if background:
             image = background.get("image")
@@ -758,13 +759,10 @@ class FileView(QWidget):
                 opacity = float(background.get("opacity", 1.0))
             except (TypeError, ValueError):
                 opacity = 1.0
-            scaling = str(background.get("scaling", "cover")).lower()
-            if scaling not in ("cover", "contain", "stretch"):
-                scaling = "cover"
 
         self._bg_path = path
         self._bg_opacity = max(0.0, min(1.0, opacity))
-        self._bg_scaling = scaling
+        self._bg_scaling = skin_background.resolve_fit(skin, fit_override)
         self._bg_source = self._load_bg_source(path)   # decode ONCE, keep in memory
         if path is not None and self._bg_source is None:
             self._bg_path = None                        # decode failed → palette only

@@ -343,6 +343,18 @@ class ConfigureDialog(QDialog):
         self._skin_attrib.setStyleSheet("color: palette(mid); font-size: 10px;")
         preview.addWidget(self._skin_attrib)
 
+        # Background fit picker (per-skin, persisted; disabled for off/palette-only).
+        fit_row = QHBoxLayout()
+        fit_row.addWidget(QLabel(strings.CONFIGURE_APPEARANCE_FIT_LABEL))
+        self._fit_combo = QComboBox()
+        self._fit_combo.addItem(strings.CONFIGURE_APPEARANCE_FIT_COVER, "cover")
+        self._fit_combo.addItem(strings.CONFIGURE_APPEARANCE_FIT_CONTAIN, "contain")
+        self._fit_combo.addItem(strings.CONFIGURE_APPEARANCE_FIT_STRETCH, "stretch")
+        self._fit_combo.currentIndexChanged.connect(self._on_fit_changed)
+        fit_row.addWidget(self._fit_combo)
+        fit_row.addStretch()
+        preview.addLayout(fit_row)
+
         preview.addStretch()
         row.addLayout(preview, stretch=1)
         layout.addLayout(row)
@@ -356,6 +368,7 @@ class ConfigureDialog(QDialog):
         skin = self._skins[row]
         self._apply_skin_preview(skin.id)
         self._update_skin_preview_panel(skin)
+        self._update_fit_combo(skin)
 
     def _apply_skin_preview(self, skin_id: str) -> None:
         """Apply a skin to the whole app for live preview (or restore baseline)."""
@@ -373,9 +386,41 @@ class ConfigureDialog(QDialog):
         else:
             skin_manager.apply_skin(app, role_map)
 
-        # Drive the FM-viewport wallpaper live alongside the palette preview.
-        skin = next((s for s in self._skins if s.id == skin_id), None)
-        skin_background.set_active(None if skin_id == "off" else skin)
+        # Drive the FM-viewport wallpaper live alongside the palette preview,
+        # honoring the user's per-skin fit override.
+        if skin_id == "off":
+            skin_background.set_active(None)
+        else:
+            skin = next((s for s in self._skins if s.id == skin_id), None)
+            fit = self._settings.get(f"appearance.fit.{skin_id}")
+            skin_background.set_active(skin, fit)
+
+    def _update_fit_combo(self, skin) -> None:
+        """Reflect the resolved fit for ``skin`` and enable only when it has a bg."""
+        has_bg = (
+            skin is not None and skin.id != "off"
+            and bool(getattr(skin, "background", None))
+            and bool(skin.background.get("image"))
+        )
+        self._fit_combo.setEnabled(has_bg)
+        override = self._settings.get(f"appearance.fit.{skin.id}") if has_bg else None
+        resolved = skin_background.resolve_fit(skin, override)
+        idx = self._fit_combo.findData(resolved)
+        blocked = self._fit_combo.blockSignals(True)   # don't fire _on_fit_changed
+        self._fit_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._fit_combo.blockSignals(blocked)
+
+    def _on_fit_changed(self, _index: int) -> None:
+        row = self._skin_list.currentRow()
+        if row < 0 or row >= len(self._skins):
+            return
+        skin = self._skins[row]
+        if skin.id == "off":
+            return
+        mode = self._fit_combo.currentData()
+        # Commit immediately (crash-safe), then re-render the viewport live.
+        self._settings.set(f"appearance.fit.{skin.id}", mode)
+        skin_background.set_active(skin, mode)
 
     def _update_skin_preview_panel(self, skin) -> None:
         self._skin_name.setText(skin.name)

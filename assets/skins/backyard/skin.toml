@@ -3,26 +3,26 @@
 schema = 1
 id = "backyard"
 name = "Backyard"
-description = "Natural green skin from the Swiss backyard photograph."
+description = "Natural green skin from the Swiss walkway photograph."
 version = "0.1.0"
 author = "eKplorer"
 
 [palette]
-window = "#1c2a1c"
-window_text = "#e4ecdf"
-base = "#142014"
-text = "#e4ecdf"
-alternate_base = "#283a28"
-mid = "#4f6b4f"
-dark = "#0b110b"
-highlight = "#4caf50"
-highlighted_text = "#0a140a"
+window           = "#181308"
+window_text      = "#ece6d8"
+base             = "#1f1a0e"
+text             = "#f0ead8"
+alternate_base   = "#272012"
+mid              = "#6c6150"   # olive-grey border
+dark             = "#100c05"
+highlight        = "#c8923f"   # sunset gold-orange
+highlighted_text = "#1c1408"
 
 [background]
 image = "bg.png"
 scaling = "cover"
 anchor = "center"
-opacity = 1.0
+opacity = 0.7
 
 [[attribution]]
 author = "Mental Picture Studio"

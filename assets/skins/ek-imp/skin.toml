@@ -3,26 +3,26 @@
 schema = 1
 id = "ek-imp"
 name = "eK-imp"
-description = "Neutral dark skin paired with the eK-imp wallpaper."
+description = "Neutral dark skin paired with the eK-imp wallpaper. Inspired by GIMP's BG."
 version = "0.1.0"
 author = "eKplorer"
 
 [palette]
-window = "#2b2b2b"
-window_text = "#e8e8e8"
-base = "#1f1f1f"
-text = "#e8e8e8"
-alternate_base = "#353535"
-mid = "#555555"
-dark = "#141414"
-highlight = "#5a7fb5"
+window           = "#3a3a3a"
+window_text      = "#ededed"
+base             = "#444444"
+text             = "#f0f0f0"
+alternate_base   = "#4d4d4d"
+mid              = "#8c8c8c"   # deliberately LIGHTER grey borders, per your ask
+dark             = "#2a2a2a"
+highlight        = "#5a7491"   # quiet slate-blue selection, stays neutral
 highlighted_text = "#ffffff"
 
 [background]
 image = "bg.png"
 scaling = "cover"
 anchor = "center"
-opacity = 1.0
+opacity = 0.3
 
 [[attribution]]
 author = "Devyn Genjima"

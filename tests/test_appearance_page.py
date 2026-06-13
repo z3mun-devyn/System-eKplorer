@@ -26,6 +26,16 @@ def _win_hex(app):
     return app.palette().color(_NORMAL, QPalette.ColorRole.Window).name()
 
 
+def _skin_window_hex(skin_id):
+    """The window colour a skin should apply (derived, not hardcoded, so palette
+    tuning in the .toml files doesn't break these tests)."""
+    import skin_loader
+    from PyQt6.QtGui import QColor
+    skin = next(s for s in skin_loader.discover_skins(user_dir="/nonexistent")
+                if s.id == skin_id)
+    return QColor(skin.palette["window"]).name()
+
+
 def _row_for(dlg, skin_id):
     for i in range(dlg._skin_list.count()):
         if dlg._skin_list.item(i).data(Qt.ItemDataRole.UserRole) == skin_id:
@@ -78,11 +88,11 @@ def test_selecting_skin_applies_live_and_ok_persists(qt_app, tmp_path):
     try:
         dlg = ConfigureDialog(db_path=db)
         dlg._skin_list.setCurrentRow(_row_for(dlg, "twmaf1"))
-        assert _win_hex(qt_app) == "#1a2230"          # applied live, no OK yet
+        assert _win_hex(qt_app) == _skin_window_hex("twmaf1")          # applied live, no OK yet
 
         dlg._on_ok()
         assert SettingsRepository(db).get("appearance.active_skin") == "twmaf1"
-        assert _win_hex(qt_app) == "#1a2230"          # stays applied after OK
+        assert _win_hex(qt_app) == _skin_window_hex("twmaf1")          # stays applied after OK
     finally:
         skin_manager.restore_baseline(qt_app)
 
@@ -95,13 +105,13 @@ def test_cancel_reverts_to_original_skin(qt_app, tmp_path):
     skin_manager.capture_baseline(qt_app)
     try:
         dlg = ConfigureDialog(db_path=db)
-        assert _win_hex(qt_app) == "#1a2230"          # loaded active skin applied
+        assert _win_hex(qt_app) == _skin_window_hex("twmaf1")          # loaded active skin applied
 
         dlg._skin_list.setCurrentRow(_row_for(dlg, "backyard"))
-        assert _win_hex(qt_app) == "#1c2a1c"          # previewing another
+        assert _win_hex(qt_app) == _skin_window_hex("backyard")          # previewing another
 
         dlg.reject()
-        assert _win_hex(qt_app) == "#1a2230"          # reverted to original
+        assert _win_hex(qt_app) == _skin_window_hex("twmaf1")          # reverted to original
         # Cancel must NOT persist the previewed skin.
         assert SettingsRepository(db).get("appearance.active_skin") == "twmaf1"
     finally:
@@ -117,13 +127,58 @@ def test_off_selection_restores_baseline(qt_app, tmp_path):
     try:
         dlg = ConfigureDialog(db_path=db)
         dlg._skin_list.setCurrentRow(_row_for(dlg, "twmaf1"))
-        assert _win_hex(qt_app) == "#1a2230"
+        assert _win_hex(qt_app) == _skin_window_hex("twmaf1")
 
         dlg._skin_list.setCurrentRow(_row_for(dlg, "off"))
         assert _win_hex(qt_app) == baseline           # off → baseline
 
         dlg._on_ok()
         assert SettingsRepository(db).get("appearance.active_skin") == "off"
+    finally:
+        skin_manager.restore_baseline(qt_app)
+
+
+def test_fit_combo_enabled_reflects_persists_per_skin(qt_app, tmp_path):
+    if qt_app is None:
+        pytest.skip("PyQt6 unavailable")
+    db = tmp_path / "s.db"
+    skin_manager.capture_baseline(qt_app)
+    try:
+        dlg = ConfigureDialog(db_path=db)
+
+        # Clockwork: combo enabled, reflects TOML default ("cover").
+        dlg._skin_list.setCurrentRow(_row_for(dlg, "clockwork"))
+        assert dlg._fit_combo.isEnabled()
+        assert dlg._fit_combo.currentData() == "cover"
+
+        # Change to Contain → persisted under the per-skin key, applied live.
+        dlg._fit_combo.setCurrentIndex(dlg._fit_combo.findData("contain"))
+        assert SettingsRepository(db).get("appearance.fit.clockwork") == "contain"
+
+        # Another skin keeps its own (cover); clockwork stays independent.
+        dlg._skin_list.setCurrentRow(_row_for(dlg, "twmaf1"))
+        assert dlg._fit_combo.currentData() == "cover"
+        dlg._skin_list.setCurrentRow(_row_for(dlg, "clockwork"))
+        assert dlg._fit_combo.currentData() == "contain"
+
+        # "off" → disabled.
+        dlg._skin_list.setCurrentRow(_row_for(dlg, "off"))
+        assert not dlg._fit_combo.isEnabled()
+    finally:
+        skin_manager.restore_baseline(qt_app)
+
+
+def test_fit_persists_across_dialog_reopen(qt_app, tmp_path):
+    """Restart simulation: a fresh dialog reflects the persisted per-skin fit."""
+    if qt_app is None:
+        pytest.skip("PyQt6 unavailable")
+    db = tmp_path / "s.db"
+    SettingsRepository(db).set("appearance.fit.backyard", "stretch")
+    skin_manager.capture_baseline(qt_app)
+    try:
+        dlg = ConfigureDialog(db_path=db)
+        dlg._skin_list.setCurrentRow(_row_for(dlg, "backyard"))
+        assert dlg._fit_combo.currentData() == "stretch"
     finally:
         skin_manager.restore_baseline(qt_app)
 

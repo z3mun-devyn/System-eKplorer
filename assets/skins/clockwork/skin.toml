@@ -3,20 +3,20 @@
 schema = 1
 id = "clockwork"
 name = "Clockwork"
-description = "Warm brass-and-sepia skin."
+description = "Warm brass-and-sepia skin with a bunch of clocks in the background."
 version = "0.1.0"
 author = "eKplorer"
 
 [palette]
-window = "#2b2419"
-window_text = "#ecdcc0"
-base = "#201b12"
-text = "#ecdcc0"
-alternate_base = "#3a3122"
-mid = "#6b5a3e"
-dark = "#14100a"
-highlight = "#b8860b"
-highlighted_text = "#1a1408"
+window           = "#0d0a03"
+window_text      = "#ece4cf"
+base             = "#15110a"
+text             = "#f0e8d6"
+alternate_base   = "#1d170b"
+mid              = "#6e5d22"   # amber-muted border
+dark             = "#070500"
+highlight        = "#c79a22"   # gold selection
+highlighted_text = "#1a1400"   # dark text on gold white would glare
 
 [background]
 image = "bg.png"
