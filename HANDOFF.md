@@ -5,6 +5,31 @@
 - Git is on main, linear history, all milestones tagged
 
 ## Completed milestones
+- CHORE — 1.0 POC identity finalization (for the tag).
+  VERSION: strings.APP_VERSION "0.1-alpha" → "1.0 Proof of Concept" (single source —
+  propagates to the bottom status bar via main.py:172 and the About page via
+  configure_dialog.py "Version {APP_VERSION}"; both confirmed reading it). No other
+  app-version literal exists in code. NOTE: the .desktop "Version=1.0" is the
+  freedesktop ENTRY-SPEC version (not the app version) — left as-is. Per-skin
+  skin.toml version="0.1.0" are asset versions, unrelated — left.
+  ABOUT page (configure_dialog _build_about_page): added a centred tagline under the
+  title ("The unified and customizable File and Package Manager, Terminal, Clipboard
+  and Drive Monitoring software for Windows migrants to Linux.") and a byline at the
+  bottom ("By Devyn Genjima, Anthropic Claude"); new strings CONFIGURE_ABOUT_TAGLINE /
+  CONFIGURE_ABOUT_BYLINE. README status line "Milestone 0 — Hello World (pre-alpha)" →
+  "1.0 Proof of Concept" and its one-line description updated to the tagline.
+  CODENAME SCRUB: the only "ekploiter" (i-variant repo codename) left in tracked files
+  are PROTECTED/HISTORICAL — main.py _OLD_DATA_DIR (~/.local/share/ekploiter migration
+  path, do-not-touch) and the HANDOFF entries documenting that migration + the past
+  eKploiter→eKplorer rename/tag. These are deliberately NOT scrubbed (rewriting them
+  falsifies history and corrupts the record of the do-not-touch migration). "ekplorer"
+  (no i — app id, paths, .desktop, xdg-mime) is untouched by design.
+  STILL OUTSTANDING (outward-facing, needs user): rename the GitHub repo MenOfMen/
+  ekploiter → system-explorer (gh repo rename + update the git remote) and set
+  strings.APP_REPO_URL to the new public URL — left empty so the About "Source:" line
+  stays hidden until then. Full suite 944 passing. Untouched: config/data paths,
+  ekplorer.desktop, xdg-mime, internal ids.
+
 - M11 P5: Readability scrim + High Contrast skin + _template authoring folder.
   LAST engine build — M11 is feature-complete (art pass, then tag, remain).
   STATUS: tests green; NOT yet eyeballed on a real display.

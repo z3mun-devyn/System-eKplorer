@@ -476,6 +476,12 @@ class ConfigureDialog(QDialog):
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_lbl)
 
+        tagline_lbl = QLabel(strings.CONFIGURE_ABOUT_TAGLINE)
+        tagline_lbl.setWordWrap(True)
+        tagline_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tagline_lbl.setStyleSheet("color: palette(mid);")
+        layout.addWidget(tagline_lbl)
+
         version_lbl = QLabel(f"Version {strings.APP_VERSION}")
         version_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version_lbl)
@@ -496,6 +502,11 @@ class ConfigureDialog(QDialog):
             repo_lbl.setOpenExternalLinks(True)
             repo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(repo_lbl)
+
+        byline_lbl = QLabel(strings.CONFIGURE_ABOUT_BYLINE)
+        byline_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        byline_lbl.setStyleSheet("color: palette(mid);")
+        layout.addWidget(byline_lbl)
 
         layout.addStretch()
         return page

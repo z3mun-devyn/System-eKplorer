@@ -3,7 +3,7 @@
 # Also home to shared color utilities used across views.
 
 APP_TITLE    = "System eKplorer"
-APP_VERSION  = "0.1-alpha"
+APP_VERSION  = "1.0 Proof of Concept"
 APP_REPO_URL = ""  # Set when repository is public
 
 # Tab bar
@@ -618,6 +618,11 @@ CONFIGURE_SYS_SMART_IN_GROUP    = "✓ In disk group (re-login if SMART still sh
 CONFIGURE_SYS_SMART_NOT_IN_GROUP = "✗ Not in disk group"
 CONFIGURE_ABOUT_LICENSE     = "GNU General Public License v3"
 CONFIGURE_ABOUT_REPO        = "Source:"
+CONFIGURE_ABOUT_TAGLINE     = (
+    "The unified and customizable File and Package Manager, Terminal, Clipboard "
+    "and Drive Monitoring software for Windows migrants to Linux."
+)
+CONFIGURE_ABOUT_BYLINE      = "By Devyn Genjima, Anthropic Claude"
 
 # ── Clipboard tab ─────────────────────────────────────────────────────────────
 TAB_CLIPBOARD              = "Clipboard"

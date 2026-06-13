@@ -1,69 +1,25 @@
 # System eKplorer
 
-A unified file manager and software manager for KDE Plasma, designed for Windows users migrating to Linux.
+> The unified and customizable File and Package Manager, Terminal, Clipboard and
+> Drive Monitoring software for Windows migrants to Linux. Formerly and internally known as "ekploiter."
 
-**Status: Milestone 0 — Hello World (pre-alpha)**
+**1.0 — Proof of Concept.** A working exhibition for an idea that neurodivergents like myself within the Linux community have neglected to do. It runs end-to-end and is largely feature-complete judging by the milestones reached. I will improve it over time as I'm still aware of minor bugs and adjustments that need to be made, but I can't promise rock-solid reliability or support. However, the source is open for anyone that downloaded System eKplorer to fork it and make it better. Maybe this kind of software is what Linux migrants like myself need rather than certain "regressions" from a modern computing standpoint.
 
-## Vision
+![File Manager](docs/twmaf.png)
+![Dashboard](docs/dashboard.png)
 
-eKplorer brings together two tasks Windows users do in one place — browsing files and managing installed software — into a single, familiar application. It speaks Windows idioms where Linux terminology would create confusion, and stays read-only by default.
+## What it is
+One app: file manager + package manager + terminal + clipboard + drive dashboard.
+PyQt6, Linux. Fully skinnable.
 
-Target distros: **Kubuntu** (primary), Bazzite, Arch/SteamOS.
+## Skins
+Copy `assets/skins/_template/`, rename it, edit `skin.toml` (colors + background) and
+drop in a `bg.png`. It appears in Configure → Appearance. Colors come from `[palette]`,
+NOT the image — edit both.
 
 ## Requirements
+- Python 3.11+, PyQt6
+- `smartmontools` for drive health
+  (NVMe SMART needs: `sudo setcap cap_sys_rawio,cap_sys_admin+ep "$(command -v smartctl)"`)
 
-- Python 3.11+
-- PyQt6
-- KDE Plasma 6 (for full theme integration)
-
-## Quick start
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install PyQt6
-python main.py
-```
-
-## Project structure
-
-```
-ekplorer/
-├── main.py              # Entry point
-├── strings.py           # Centralised terminology layer (§4 of spec)
-├── assets/
-│   ├── icons/
-│   │   └── ekplorer.png   # App icon — Adwaita folder + magnifying glass + clamp (§15)
-│   └── ekplorer.desktop   # KDE app-menu integration
-├── views/               # Per-tab view models and UI logic
-├── backends/            # Pluggable backends (apt, flatpak, snap, zfs, …)
-├── models/              # Data classes shared across views and backends
-└── tests/               # pytest test suite (parsers tested first)
-```
-
-### Installing the desktop entry (development)
-
-```bash
-# Icon
-cp assets/icons/ekplorer.png ~/.local/share/icons/hicolor/512x512/apps/ekplorer.png
-gtk-update-icon-cache ~/.local/share/icons/hicolor/ 2>/dev/null || true
-
-# Desktop file (edit Exec= to point at your main.py first)
-cp assets/ekplorer.desktop ~/.local/share/applications/
-```
-
-## Milestones
-
-| # | Name | Status |
-|---|------|--------|
-| 0 | Hello World | ✅ Done |
-| 1 | Drive tiles (read-only) | Pending |
-| 2 | Drive labels & persistence | Pending |
-| 3 | Package list (apt, read-only) | Pending |
-| 4 | Tag system | Pending |
-| 5 | Uninstall (first destructive action) | Pending |
-| 6 | Flatpak backend | Pending |
-
-## Licence
-
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+## Run
