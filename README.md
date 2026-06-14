@@ -21,22 +21,41 @@ Anyhow, I have no coding experience and this was made by Claude Code, just for d
 
 Unlike Konqueror that failed because it tried to do everything at once, I wanted a clearer focus on anything-software management. The source has been however opened for anyone to fork it and make it better, and potentially, this software could facilitate future spins like for GNOME (eGplorer), XFCE (eXCplorer) or whichever DE there is.
 
-## For The Nerds  
-Under the hood, it’s a Python application built on **PyQt6.** Supposed to support APT and Flatpack, It uses SQLite to persist settings, labels, and a tagging system for both files and packages. All heavy operations run on background threads so the interface stays responsive... hopefully; the icon system reads whichever theme the user has set (Breeze, Adwaita, or anything else, though for KDE 5.2.7 Breeze is kinda scuffed for me) and adapts automatically.
+## For The Nerds:  
+Under the hood it's a Python app on **PyQt6**. Package management speaks **APT,
+Flatpak and Snap**; the drive dashboard is **ZFS-aware** (reads pool members, not just
+mountpoints) and pulls SMART health via `smartctl`. **SQLite** persists settings plus a
+tagging system that works on both files and packages. All the heavy lifting — scans,
+package queries, SMART — runs on background threads so the UI stays responsive…
+hopefully. The icon layer reads whatever theme you've set (Breeze, Adwaita, anything)
+and adapts on the fly — though Breeze on the Qt5-era Plasma 5.27 I tested against is
+kinda scuffed. To my recollection, if the app crashes, it freezes for a second and then upon
+restart, it brings the user back to where they were last.
 
-For Customization/Theming/Skinning, whatever you want to call it, it uses a PNG and TOML-based system that is easily copy-pasteable, and it's under the assets folder. I have made a few themes for convienience sake.
+**Theming is the party trick.** There are zero hardcoded colors — the whole UI is driven
+off the active Qt palette, so a "skin" is just a palette swap that every widget, native
+ones included, follows for free. Skins are a **PNG + TOML** bundle (a folder with a
+`skin.toml` and a `bg.png`): palette, background image, fit mode, opacity, a readability
+scrim, and credits, all per-skin. Drop a folder into `~/.config/ekplorer/skins/` and it
+shows up in **Configure → Appearance** — no recompile, no registration. Ships with seven
+skins plus a high-contrast accessibility mode, and a commented `assets/skins/_template/`
+to copy. Note: colors live in `[palette]`, NOT the image — swap a wallpaper and the tint
+won't follow unless you edit both.
 
-Target distros: **Kubuntu** (primary), Bazzite, Arch/SteamOS. In my case, it was made partly on Kubuntu, but also Ubuntu 5.2.7 as a backup.
+**Target distros:** Kubuntu (primary), Bazzite, Arch/SteamOS. Built mostly on Kubuntu,
+with a Plasma 5.27 box as backup.
 
-# Requirements
+# Requirements:
 
 - Python 3.11+
 - PyQt6
 - KDE Plasma 6 (for full theme integration)
 
-## Manual quick start:
+## Manual quick start / Git Clone:
 
 ```bash
+git clone https://github.com/z3mun-devyn/System-eKplorer.git
+cd System-eKplorer
 python -m venv .venv
 source .venv/bin/activate
 pip install PyQt6
@@ -47,16 +66,25 @@ python main.py
 
 ```
 ekplorer/
-├── main.py              # Entry point
-├── strings.py           # Centralised terminology layer (§4 of spec)
+System-eKplorer/
+├── main.py              # Entry point (captures palette baseline, autoloads active skin)
+├── strings.py           # Centralised terminology layer
+├── theme.py             # Palette-derived surface helpers (single color authority)
+├── skin_manager.py      # Builds + applies QPalette per skin; restore for "Off"
+├── skin_loader.py       # Parses skin.toml, enumerates bundled + user skins
 ├── assets/
 │   ├── icons/
-│   │   └── ekplorer.png   # App icon — Adwaita folder + magnifying glass + clamp (§15)
-│   └── ekplorer.desktop   # KDE app-menu integration
-├── views/               # Per-tab view models and UI logic
-├── backends/            # Pluggable backends (apt, flatpak, snap, zfs, …)
+│   │   └── ekplorer.png        # App icon
+│   ├── ekplorer.desktop        # KDE app-menu integration
+│   └── skins/                  # Bundled skins (one folder each)
+│       ├── _template/          #   commented starter — copy this to make your own
+│       ├── high-contrast/      #   accessibility mode (no wallpaper)
+│       ├── twmaf1/  twmaf2/  ek-imp/  ignorance/  clockwork/  backyard/
+│       └── …                   #   each: skin.toml + bg.png
+├── views/               # Per-tab view models and UI logic (incl. Appearance page)
+├── backends/            # Pluggable backends (apt, flatpak, snap, zfs, smart, …)
 ├── models/              # Data classes shared across views and backends
-└── tests/               # pytest test suite (parsers tested first)
+└── tests/               # pytest suite (parsers + skin loader tested first)
 ```
 
 ### Installing the desktop entry (development)
