@@ -4,7 +4,9 @@
 # System eKplorer (V1.0 POC)
 A unified File and Software manager, with a drive dashboard, clipboard and terminal tab, made by a Windows user. Formerly known by it's internal codename as "ekplorer," (born out of a joke.)
 
-<img width="892" height="606" alt="Screenshot_20260613_072300" src="https://github.com/user-attachments/assets/07d7a6e2-5f0e-4f47-82bc-d76e20605cde" /> 
+<img width="1654" height="600" alt="eKplorer Demo" src="https://github.com/user-attachments/assets/87805cf3-bf1c-41dd-8d99-23122f9a66ff" />
+
+
 
 
 
